@@ -55,10 +55,11 @@ class TestWorkflowSubmitter:
                 "test_user@test_host:/remote/base/dir",
             ]
 
-            pueue_command_str = (
-                f"pueue add --group test_group -- "
-                f"'cd {remote_case_path} && python interpreter.py'"
+            # This is the updated command the test should expect.
+            remote_command = (
+                f"cd {remote_case_path} && python interpreter.py && python moquisim.py"
             )
+            pueue_command_str = f"pueue add --group test_group -- '{remote_command}'"
             ssh_command = ["ssh", "test_user@test_host", pueue_command_str]
 
             # Check if subprocess.run was called correctly
