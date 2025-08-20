@@ -60,12 +60,13 @@ class WorkflowSubmitter:
 
         # 2. Submit job to Pueue via ssh
         # The command to be executed on the remote machine.
-        remote_command = f"cd {remote_path} && python interpreter.py"
+        # It runs the two simulation scripts in sequence.
+        remote_command = (
+            f"cd {remote_path} && python interpreter.py && python moquisim.py"
+        )
 
         # The pueue command that wraps the remote command.
-        pueue_command_str = (
-            f"pueue add --group {pueue_group} -- '{remote_command}'"
-        )
+        pueue_command_str = f"pueue add --group {pueue_group} -- '{remote_command}'"
 
         ssh_command = ["ssh", f"{user}@{host}", pueue_command_str]
         try:
