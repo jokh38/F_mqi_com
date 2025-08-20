@@ -133,3 +133,22 @@ def setup_logging():
   * **상태 확인**: `pueue status`로 현재 작업들의 **Task ID**를 확인합니다.
   * **실시간 로그**: `pueue log <Task_ID> -f` 명령어로 특정 작업의 로그를 실시간으로 확인합니다.
   * **전체 로그**: `pueue log <Task_ID>` 명령어로 완료된 작업의 전체 로그를 확인합니다.
+  
+  
+-----
+
+### 6\. Dependencies
+
+# For parsing the YAML configuration file
+pyyaml
+
+# For monitoring file system events (e.g., new directory creation)
+watchdog
+
+# For creating a rich, text-based user interface (TUI) for the dashboard
+rich
+
+# pueue : CLI for scheduling  
+  https://github.com/Nukesor/pueue
+  
+  
