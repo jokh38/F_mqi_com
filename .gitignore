@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.so
+
+# Virtual environment
+.venv/
+
+# Test & Coverage artifacts
+.coverage
+test_communicator.db
+
+# Application data & logs
+data/
+communicator_local.log
