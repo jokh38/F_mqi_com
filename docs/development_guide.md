@@ -24,7 +24,27 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## 3. Running the Test Suite
+## 3. Installing Development Tools
+
+Before running quality checks, you need to install the necessary tools. While `requirements.txt` includes the main application dependencies, the development-specific tools should be installed explicitly in your virtual environment.
+
+```bash
+# Install testing tools
+pip install pytest pytest-cov
+
+# Install static analysis tools
+pip install black flake8 mypy
+
+# Install type stubs for libraries that need them
+pip install types-PyYAML
+
+# Install the file system monitoring library
+pip install watchdog
+```
+
+Once these are installed, you can proceed with running the quality checks.
+
+## 4. Running the Test Suite
 
 All new functionality must be accompanied by tests. We use `pytest` to run our tests and `pytest-cov` to measure code coverage, which must be maintained at **85% or higher**.
 
@@ -40,7 +60,7 @@ This command will:
 - Discover and run all tests in the `tests/` directory.
 - Generate a coverage report for the `src/` directory.
 
-## 4. Static Analysis Workflow
+## 5. Static Analysis Workflow
 
 Before committing any code, you must run the following three checks.
 
@@ -85,7 +105,7 @@ pip install types-PyYAML
 
 After installing new type stubs, remember to add them to the `requirements.txt` file.
 
-## 5. Recommended Pre-Commit Workflow
+## 6. Recommended Pre-Commit Workflow
 
 To avoid issues, please follow this sequence before every commit:
 
