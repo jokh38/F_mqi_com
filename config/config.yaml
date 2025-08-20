@@ -1,2 +1,7 @@
 database:
   path: "data/mqi_communicator.db"
+
+hpc:
+  host: "your_hpc_hostname"
+  user: "your_username"
+  remote_base_dir: "/path/to/remote/dir"

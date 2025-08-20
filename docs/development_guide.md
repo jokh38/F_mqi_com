@@ -8,7 +8,9 @@ Following these steps will help prevent common errors and ensure that our codeba
 
 ## 2. Initial Setup
 
-First, ensure you have Python 3.10+ installed. Then, create a virtual environment and install the required dependencies:
+First, ensure you have Python 3.10+ installed. Then, create and activate a virtual environment.
+
+**Important:** It is crucial to install the required dependencies from `requirements.txt` immediately after activating the environment. This ensures that all necessary tools, including `pytest`, are available before you proceed with development or testing.
 
 ```bash
 # Create a virtual environment (do this once)
