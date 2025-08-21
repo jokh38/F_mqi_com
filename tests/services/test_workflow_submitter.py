@@ -143,12 +143,12 @@ class TestGetWorkflowStatus:
             status = submitter.get_workflow_status(107)
             assert status == "unreachable"
 
-    def test_get_status_json_error_is_failure(self, submitter):
-        """Test status is 'failure' if the output is not valid JSON."""
+    def test_get_status_json_error_is_unreachable(self, submitter):
+        """Test status is 'unreachable' if the output is not valid JSON."""
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="not json", stderr="")
             status = submitter.get_workflow_status(107)
-            assert status == "failure"
+            assert status == "unreachable"
 
     def test_get_status_done_with_failure_result(self, submitter):
         """Test status is 'failure' for a 'Done' task with a 'failure' result."""

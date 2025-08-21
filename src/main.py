@@ -118,9 +118,12 @@ def main(config: Dict[str, Any]) -> None:
                         )
 
                         # Check if a task with the corresponding label exists on the HPC
-                        remote_task = workflow_submitter.find_task_by_label(label)
+                        (
+                            status,
+                            remote_task,
+                        ) = workflow_submitter.find_task_by_label(label)
 
-                        if remote_task:
+                        if status == "found":
                             # --- Recovery Path ---
                             # The job exists remotely, but our DB wasn't updated. Let's fix it.
                             task_id = remote_task.get("id")
@@ -142,7 +145,7 @@ def main(config: Dict[str, Any]) -> None:
                                     case_id, status="failed"
                                 )
                                 db_manager.release_gpu_resource(case_id)
-                        else:
+                        elif status == "not_found":
                             # --- Rollback Path ---
                             # No remote job was found. The submission failed before starting.
                             # It's safe to mark as failed and release the resource.
@@ -154,6 +157,13 @@ def main(config: Dict[str, Any]) -> None:
                             db_manager.release_gpu_resource(case_id)
                             logging.info(
                                 f"Released GPU resource for failed submission of case ID: {case_id}."
+                            )
+                        elif status == "unreachable":
+                            # --- Do Nothing Path ---
+                            # The HPC is unreachable, so we can't determine the status.
+                            # Skip this case and let the main loop retry in the next cycle.
+                            logging.warning(
+                                f"HPC is unreachable. Cannot determine status for submitting case {case_id}. Will retry."
                             )
 
                 # --- Part 1: Manage all RUNNING cases (replaces old Part 0.5 and 1) ---
