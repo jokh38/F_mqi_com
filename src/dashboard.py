@@ -15,6 +15,7 @@ from rich.layout import Layout
 from rich.panel import Panel
 from rich.align import Align
 from datetime import datetime
+from typing import List, Dict, Any
 
 from src.common.db_manager import DatabaseManager, KST
 
@@ -22,7 +23,7 @@ from src.common.db_manager import DatabaseManager, KST
 CONFIG_PATH = "config/config.yaml"
 
 
-def create_tables(case_data, resource_data) -> Layout:
+def create_tables(case_data: List[Dict[str, Any]], resource_data: List[Dict[str, Any]]) -> Layout:
     """Creates the layout containing tables for cases and GPU resources."""
     layout = Layout()
     layout.split_column(
@@ -31,8 +32,9 @@ def create_tables(case_data, resource_data) -> Layout:
     )
 
     # --- Cases Table ---
+    updated_time = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
     case_table = Table(
-        title=f"Live Case Status (Updated: {datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')})",
+        title=f"Live Case Status (Updated: {updated_time})",
         expand=True,
     )
     case_table.add_column("ID", justify="right", style="cyan", no_wrap=True)
@@ -59,13 +61,16 @@ def create_tables(case_data, resource_data) -> Layout:
         else:
             status_style = f"[{status}]"
 
+        task_id_str = (
+            str(case["pueue_task_id"]) if case["pueue_task_id"] is not None else "N/A"
+        )
         case_table.add_row(
             str(case["case_id"]),
             case["case_path"],
             status_style,
             progress,
             case["pueue_group"] or "N/A",
-            str(case["pueue_task_id"]) if case["pueue_task_id"] is not None else "N/A",
+            task_id_str,
             case["submitted_at"],
             case["status_updated_at"],
         )
@@ -86,14 +91,14 @@ def create_tables(case_data, resource_data) -> Layout:
         resource_table.add_row(
             resource["pueue_group"],
             status_style,
-            str(resource["assigned_case_id"])
-            if resource["assigned_case_id"] is not None
-            else "None",
+            (
+                str(resource["assigned_case_id"])
+                if resource["assigned_case_id"] is not None
+                else "None"
+            ),
         )
 
-    layout["main"].update(
-        Panel(Align.center(case_table, vertical="middle"), title="Cases")
-    )
+    layout["main"].update(Panel(Align.center(case_table, vertical="middle"), title="Cases"))
     layout["footer"].update(
         Panel(Align.center(resource_table, vertical="middle"), title="GPU Resources")
     )
@@ -121,27 +126,34 @@ def display_dashboard() -> None:
             return
 
         if not Path(db_path).exists():
-            console.print(f"[bold yellow]Database file not found at '{db_path}'.[/bold yellow]")
-            console.print("Please run the main application first to create the database.")
+            console.print(
+                f"[bold yellow]Database file not found at '{db_path}'.[/bold yellow]"
+            )
+            console.print(
+                "Please run the main application first to create the database."
+            )
             # Create dummy tables to show the structure
-            with Live(create_tables([], []), screen=True, redirect_stderr=False) as live:
-                time.sleep(5) # Show empty dashboard for 5 seconds
+            with Live(
+                create_tables([], []), screen=True, redirect_stderr=False
+            ) as live:
+                time.sleep(5)  # Show empty dashboard for 5 seconds
             return
-
 
         db_manager = DatabaseManager(db_path=db_path)
         console.print("[bold cyan]MQI Communicator Dashboard[/bold cyan]")
         console.print(f"Connected to database: [yellow]{db_path}[/yellow]")
         console.print("Press [bold]Ctrl+C[/bold] to exit.")
 
-        with Live(
-            create_tables([], []), screen=True, redirect_stderr=False
-        ) as live:
+        with Live(create_tables([], []), screen=True, redirect_stderr=False) as live:
             while True:
                 # Fetch all cases and resources
                 # A real implementation might be more selective, but for a few hundred cases this is fine.
-                all_cases = db_manager.cursor.execute("SELECT * FROM cases ORDER BY case_id DESC").fetchall()
-                all_resources = db_manager.cursor.execute("SELECT * FROM gpu_resources ORDER BY pueue_group").fetchall()
+                all_cases = db_manager.cursor.execute(
+                    "SELECT * FROM cases ORDER BY case_id DESC"
+                ).fetchall()
+                all_resources = db_manager.cursor.execute(
+                    "SELECT * FROM gpu_resources ORDER BY pueue_group"
+                ).fetchall()
 
                 # Convert rows to dictionaries for easier processing
                 case_data = [dict(row) for row in all_cases]
@@ -151,7 +163,9 @@ def display_dashboard() -> None:
                 time.sleep(2)  # Refresh interval
 
     except FileNotFoundError:
-        console.print(f"[bold red]Error: Config file not found at '{CONFIG_PATH}'[/bold red]")
+        console.print(
+            f"[bold red]Error: Config file not found at '{CONFIG_PATH}'[/bold red]"
+        )
     except KeyboardInterrupt:
         console.print("\n[bold cyan]Dashboard closed.[/bold cyan]")
     except Exception as e:

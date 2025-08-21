@@ -1,7 +1,6 @@
 import subprocess
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import patch, MagicMock
 import pytest
-import shlex
 import json
 from src.services.workflow_submitter import (
     WorkflowSubmitter,
@@ -71,7 +70,9 @@ class TestWorkflowSubmitter:
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = [
                 MagicMock(returncode=0),
-                subprocess.CalledProcessError(returncode=1, cmd="ssh", stderr="SSH failed"),
+                subprocess.CalledProcessError(
+                    returncode=1, cmd="ssh", stderr="SSH failed"
+                ),
             ]
 
             with pytest.raises(WorkflowSubmissionError, match="Failed to submit job"):
@@ -104,21 +105,27 @@ class TestGetWorkflowStatus:
     def test_get_status_failure(self, submitter):
         """Test status is 'failure' for a 'Failed' task."""
         with patch("subprocess.run") as mock_run:
-            mock_run.return_value = self.mock_pueue_status({"102": {"status": "Failed"}})
+            mock_run.return_value = self.mock_pueue_status(
+                {"102": {"status": "Failed"}}
+            )
             status = submitter.get_workflow_status(102)
             assert status == "failure"
 
     def test_get_status_running(self, submitter):
         """Test status is 'running' for a 'Running' task."""
         with patch("subprocess.run") as mock_run:
-            mock_run.return_value = self.mock_pueue_status({"103": {"status": "Running"}})
+            mock_run.return_value = self.mock_pueue_status(
+                {"103": {"status": "Running"}}
+            )
             status = submitter.get_workflow_status(103)
             assert status == "running"
 
     def test_get_status_queued_is_running(self, submitter):
         """Test status is 'running' for a 'Queued' task."""
         with patch("subprocess.run") as mock_run:
-            mock_run.return_value = self.mock_pueue_status({"104": {"status": "Queued"}})
+            mock_run.return_value = self.mock_pueue_status(
+                {"104": {"status": "Queued"}}
+            )
             status = submitter.get_workflow_status(104)
             assert status == "running"
 
@@ -146,7 +153,9 @@ class TestGetWorkflowStatus:
     def test_get_status_json_error_is_unreachable(self, submitter):
         """Test status is 'unreachable' if the output is not valid JSON."""
         with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="not json", stderr="")
+            mock_run.return_value = MagicMock(
+                returncode=0, stdout="not json", stderr=""
+            )
             status = submitter.get_workflow_status(107)
             assert status == "unreachable"
 

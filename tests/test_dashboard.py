@@ -2,7 +2,6 @@
 Tests for the dashboard module.
 """
 
-import unittest
 from unittest.mock import patch, MagicMock, mock_open
 
 import yaml
@@ -97,7 +96,6 @@ def test_display_dashboard_live_update(
         "SELECT * FROM gpu_resources ORDER BY pueue_group"
     )
     assert mock_cursor.fetchall.call_count == 2
-
 
     # 4. Live display was updated with a Layout
     args, kwargs = mock_live_context.update.call_args

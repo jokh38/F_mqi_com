@@ -1,7 +1,5 @@
-import time
 from pathlib import Path
-from unittest.mock import patch, Mock, call
-from typing import Generator
+from unittest.mock import patch, Mock
 
 import pytest
 from watchdog.events import DirCreatedEvent, FileCreatedEvent
@@ -80,7 +78,7 @@ def test_handler_calls_add_case_when_timer_expires(
     # Extract the callback and its arguments from the mock Timer
     timer_call = MockTimer.call_args
     callback_func = timer_call.args[1]
-    callback_args = timer_call.kwargs['args']
+    callback_args = timer_call.kwargs["args"]
 
     # Simulate the timer expiring by executing the callback
     # Patch os.path.isdir to prevent a race condition with the temp dir cleanup
@@ -121,7 +119,7 @@ def test_handler_resets_timer_on_internal_modification(
     # Extract the callback from the second timer call
     timer_call = MockTimer.call_args
     callback_func = timer_call.args[1]
-    callback_args = timer_call.kwargs['args']
+    callback_args = timer_call.kwargs["args"]
 
     # Simulate the second timer expiring
     # Patch os.path.isdir to prevent a race condition with the temp dir cleanup
@@ -132,7 +130,9 @@ def test_handler_resets_timer_on_internal_modification(
 
 
 @patch("src.services.case_scanner.Observer")
-def test_case_scanner_integration(MockObserver, mock_db_manager: Mock, temp_watch_dir: Path):
+def test_case_scanner_integration(
+    MockObserver, mock_db_manager: Mock, temp_watch_dir: Path
+):
     """
     Tests the CaseScanner class integration with the observer.
     """

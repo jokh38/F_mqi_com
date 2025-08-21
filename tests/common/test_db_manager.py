@@ -42,9 +42,13 @@ def test_database_initialization(db_manager: DatabaseManager):
     assert os.path.exists(TEST_DB_PATH)
     conn = sqlite3.connect(TEST_DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cases';")
+    cursor.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='cases';"
+    )
     assert cursor.fetchone() is not None, "'cases' table was not created."
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='gpu_resources';")
+    cursor.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='gpu_resources';"
+    )
     assert cursor.fetchone() is not None, "'gpu_resources' table was not created."
     conn.close()
 
@@ -124,9 +128,9 @@ def test_find_and_lock_gpu_when_first_is_busy(db_manager: DatabaseManager):
     case_id_2 = db_manager.add_case("/path/to/case2")
     assert case_id_1 is not None and case_id_2 is not None
 
-    db_manager.add_gpu_resource("gpu_a", "assigned") # This one is busy
+    db_manager.add_gpu_resource("gpu_a", "assigned")  # This one is busy
     db_manager.update_gpu_status("gpu_a", "assigned", case_id_1)
-    db_manager.add_gpu_resource("gpu_b", "available") # This one is free
+    db_manager.add_gpu_resource("gpu_b", "available")  # This one is free
 
     # Action: should skip gpu_a and lock gpu_b
     locked_group = db_manager.find_and_lock_any_available_gpu(case_id_2)
@@ -205,6 +209,7 @@ def test_ensure_gpu_resource_exists(db_manager: DatabaseManager):
     resource = db_manager.get_gpu_resource("gpu_new")
     assert resource["status"] == "assigned"
 
+
 # Keep other tests that are still relevant and correct
 def test_get_case_by_path(db_manager: DatabaseManager):
     case_path = "/path/to/unique_case"
@@ -212,6 +217,7 @@ def test_get_case_by_path(db_manager: DatabaseManager):
     case = db_manager.get_case_by_path(case_path)
     assert case is not None
     assert case["case_id"] == case_id
+
 
 def test_get_cases_by_status(db_manager: DatabaseManager):
     id1 = db_manager.add_case("/path/case_submitted_1")
@@ -261,3 +267,28 @@ def test_update_case_completion_preserves_historical_data(db_manager: DatabaseMa
     # Verify that historical data is PRESERVED
     assert completed_case["pueue_group"] == "gpu_a"
     assert completed_case["pueue_task_id"] == 12345
+
+
+def test_get_resources_by_status(db_manager: DatabaseManager):
+    """
+    Tests retrieving GPU resources based on their status.
+    """
+    db_manager.add_gpu_resource("gpu_a", "available")
+    db_manager.add_gpu_resource("gpu_b", "assigned")
+    db_manager.add_gpu_resource("gpu_c", "zombie")
+    db_manager.add_gpu_resource("gpu_d", "available")
+
+    available = db_manager.get_resources_by_status("available")
+    assert len(available) == 2
+    assert {r["pueue_group"] for r in available} == {"gpu_a", "gpu_d"}
+
+    assigned = db_manager.get_resources_by_status("assigned")
+    assert len(assigned) == 1
+    assert assigned[0]["pueue_group"] == "gpu_b"
+
+    zombie = db_manager.get_resources_by_status("zombie")
+    assert len(zombie) == 1
+    assert zombie[0]["pueue_group"] == "gpu_c"
+
+    empty = db_manager.get_resources_by_status("non_existent_status")
+    assert len(empty) == 0

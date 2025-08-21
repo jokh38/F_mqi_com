@@ -2,7 +2,7 @@ import logging
 import os
 import threading
 from pathlib import Path
-from typing import Dict, Any, Callable
+from typing import Dict, Any
 
 from watchdog.events import FileSystemEventHandler, FileSystemEvent
 from watchdog.observers import Observer
@@ -105,9 +105,9 @@ class StableDirectoryEventHandler(FileSystemEventHandler):
         try:
             # Use a set to handle events that have both src_path and dest_path (e.g., move)
             paths_to_check = set()
-            if hasattr(event, 'src_path'):
+            if hasattr(event, "src_path"):
                 paths_to_check.add(Path(os.fsdecode(event.src_path)))
-            if hasattr(event, 'dest_path'):
+            if hasattr(event, "dest_path"):
                 paths_to_check.add(Path(os.fsdecode(event.dest_path)))
 
             if not paths_to_check:
@@ -131,7 +131,9 @@ class StableDirectoryEventHandler(FileSystemEventHandler):
 
             # Reset the timer for each affected case directory
             for case_dir in case_dirs_to_reset:
-                logger.debug(f"Activity for case '{case_dir}' detected. Resetting timer.")
+                logger.debug(
+                    f"Activity for case '{case_dir}' detected. Resetting timer."
+                )
                 self._reset_timer(case_dir)
 
         except Exception as e:

@@ -277,8 +277,11 @@ class WorkflowSubmitter:
             logger.info(f"Successfully sent kill command for task {task_id}.")
             return True
         except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
-            stderr = e.stderr if hasattr(e, 'stderr') else 'Timeout'
+            stderr_msg = "Timeout"
+            if hasattr(e, "stderr") and e.stderr:
+                stderr_msg = e.stderr.decode(errors="ignore")
             logger.error(
-                f"Failed to kill task {task_id} on HPC. It may have already finished or the HPC is unreachable. Stderr: {stderr}"
+                f"Failed to kill task {task_id} on HPC. It may have already "
+                f"finished or the HPC is unreachable. Stderr: {stderr_msg}"
             )
             return False

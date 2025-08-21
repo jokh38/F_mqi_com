@@ -99,7 +99,8 @@ class DatabaseManager:
         now_iso = datetime.now(KST).isoformat()
         self.cursor.execute(
             """
-            INSERT INTO cases (case_path, status, progress, submitted_at, status_updated_at)
+            INSERT INTO cases
+            (case_path, status, progress, submitted_at, status_updated_at)
             VALUES (?, 'submitted', 0, ?, ?)
             """,
             (case_path, now_iso, now_iso),
@@ -130,6 +131,12 @@ class DatabaseManager:
     def get_cases_by_status(self, status: str) -> List[Dict[str, Any]]:
         """Retrieves all cases with a given status."""
         self.cursor.execute("SELECT * FROM cases WHERE status = ?", (status,))
+        rows = self.cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    def get_resources_by_status(self, status: str) -> List[Dict[str, Any]]:
+        """Retrieves all GPU resources with a given status."""
+        self.cursor.execute("SELECT * FROM gpu_resources WHERE status = ?", (status,))
         rows = self.cursor.fetchall()
         return [dict(row) for row in rows]
 
@@ -255,7 +262,7 @@ class DatabaseManager:
                 WHERE rowid = (
                     SELECT rowid FROM gpu_resources
                     WHERE status = 'available'
-                    ORDER BY pueue_group -- Ensures deterministic selection for testing
+                    ORDER BY pueue_group -- Ensures deterministic selection
                     LIMIT 1
                 )
                 """,
