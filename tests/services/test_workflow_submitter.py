@@ -115,3 +115,35 @@ class TestWorkflowSubmitter:
             assert "Failed to submit job" in str(excinfo.value)
             assert "SSH failed" in str(excinfo.value)
             assert mock_run.call_count == 2
+
+    def test_submit_workflow_scp_timeout(self, mock_config):
+        """Test that workflow submission fails if scp command times out."""
+        submitter = WorkflowSubmitter(config=mock_config)
+        case_path = "/local/path/case_001"
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = subprocess.TimeoutExpired(cmd="scp", timeout=300)
+
+            with pytest.raises(WorkflowSubmissionError) as excinfo:
+                submitter.submit_workflow(case_path)
+
+            assert "Timeout during scp" in str(excinfo.value)
+            mock_run.assert_called_once()
+
+    def test_submit_workflow_ssh_timeout(self, mock_config):
+        """Test that workflow submission fails if ssh command times out."""
+        submitter = WorkflowSubmitter(config=mock_config)
+        case_path = "/local/path/case_001"
+
+        with patch("subprocess.run") as mock_run:
+            # Mock a successful scp followed by a timed-out ssh
+            mock_run.side_effect = [
+                MagicMock(returncode=0),  # Successful scp
+                subprocess.TimeoutExpired(cmd="ssh", timeout=60),
+            ]
+
+            with pytest.raises(WorkflowSubmissionError) as excinfo:
+                submitter.submit_workflow(case_path)
+
+            assert "Timeout during ssh submission" in str(excinfo.value)
+            assert mock_run.call_count == 2
