@@ -83,7 +83,9 @@ def test_handler_calls_add_case_when_timer_expires(
     callback_args = timer_call.kwargs['args']
 
     # Simulate the timer expiring by executing the callback
-    callback_func(*callback_args)
+    # Patch os.path.isdir to prevent a race condition with the temp dir cleanup
+    with patch("os.path.isdir", return_value=True):
+        callback_func(*callback_args)
 
     mock_db_manager.get_case_by_path.assert_called_once_with(new_dir_path)
     mock_db_manager.add_case.assert_called_once_with(new_dir_path)
@@ -122,7 +124,9 @@ def test_handler_resets_timer_on_internal_modification(
     callback_args = timer_call.kwargs['args']
 
     # Simulate the second timer expiring
-    callback_func(*callback_args)
+    # Patch os.path.isdir to prevent a race condition with the temp dir cleanup
+    with patch("os.path.isdir", return_value=True):
+        callback_func(*callback_args)
 
     mock_db_manager.add_case.assert_called_once_with(str(new_dir_path))
 
