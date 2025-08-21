@@ -1,6 +1,5 @@
 import subprocess
 from pathlib import Path
-import yaml
 from typing import Dict, Any
 
 
@@ -12,15 +11,14 @@ class WorkflowSubmitter:
     submitting simulation jobs to the Pueue daemon on the remote server.
     """
 
-    def __init__(self, config_path: str):
+    def __init__(self, config: Dict[str, Any]):
         """
         Initializes the WorkflowSubmitter with HPC configuration.
 
         Args:
-            config_path: The path to the YAML configuration file.
+            config: A dictionary containing the HPC configuration.
+                    Expected keys: 'hpc'
         """
-        with open(config_path, "r") as f:
-            config = yaml.safe_load(f)
         self.hpc_config: Dict[str, Any] = config["hpc"]
 
     def submit_workflow(self, case_path: str, pueue_group: str = "default") -> None:

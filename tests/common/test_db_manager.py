@@ -1,6 +1,7 @@
 import pytest
 import sqlite3
 import os
+from datetime import datetime
 from typing import Generator
 
 # This import will fail until we create the actual module
@@ -86,7 +87,10 @@ def test_add_and_get_case(db_manager: DatabaseManager):
     assert case["status"] == "submitted"
     assert case["progress"] == 0
     assert case["pueue_group"] == pueue_group
-    assert "submitted_at" in case and case["submitted_at"] is not None
+    assert "submitted_at" in case
+    # Check if the submitted_at is a valid ISO 8601 string
+    submitted_at_dt = datetime.fromisoformat(case["submitted_at"])
+    assert submitted_at_dt.tzinfo is not None
     assert case["completed_at"] is None
 
 
@@ -118,7 +122,10 @@ def test_update_case_completion(db_manager: DatabaseManager):
     assert case is not None
     assert case["status"] == "completed"
     assert case["progress"] == 100
-    assert case["completed_at"] is not None
+    assert "completed_at" in case
+    # Check if the completed_at is a valid ISO 8601 string
+    completed_at_dt = datetime.fromisoformat(case["completed_at"])
+    assert completed_at_dt.tzinfo is not None
 
 
 def test_add_and_get_gpu_resource(db_manager: DatabaseManager):
@@ -179,3 +186,35 @@ def test_get_case_by_path_not_found(db_manager: DatabaseManager):
     """
     case = db_manager.get_case_by_path("/non/existent/path")
     assert case is None
+
+
+def test_get_cases_by_status(db_manager: DatabaseManager):
+    """
+    Tests retrieving cases based on their status.
+    """
+    # Add cases with different statuses
+    db_manager.add_case("/path/case_submitted_1", "gpu0")
+    id_submitted_2 = db_manager.add_case("/path/case_submitted_2", "gpu1")
+    id_running = db_manager.add_case("/path/case_running", "gpu0")
+
+    db_manager.update_case_status(id_running, "running", 50)
+    db_manager.update_case_completion(id_submitted_2, "completed")
+
+    # Get 'submitted' cases
+    submitted_cases = db_manager.get_cases_by_status("submitted")
+    assert len(submitted_cases) == 1
+    assert submitted_cases[0]["case_path"] == "/path/case_submitted_1"
+
+    # Get 'running' cases
+    running_cases = db_manager.get_cases_by_status("running")
+    assert len(running_cases) == 1
+    assert running_cases[0]["case_id"] == id_running
+
+    # Get 'completed' cases
+    completed_cases = db_manager.get_cases_by_status("completed")
+    assert len(completed_cases) == 1
+    assert completed_cases[0]["case_id"] == id_submitted_2
+
+    # Get 'failed' cases (should be empty)
+    failed_cases = db_manager.get_cases_by_status("failed")
+    assert len(failed_cases) == 0

@@ -16,26 +16,17 @@ def mock_config():
     }
 
 
-@patch("src.services.workflow_submitter.yaml.safe_load")
-@patch("src.services.workflow_submitter.open")
 class TestWorkflowSubmitter:
     """Test suite for the WorkflowSubmitter class."""
 
-    def test_initialization(self, mock_open, mock_safe_load, mock_config):
+    def test_initialization(self, mock_config):
         """Test that WorkflowSubmitter initializes correctly."""
-        mock_safe_load.return_value = mock_config
-
-        submitter = WorkflowSubmitter(config_path="dummy/path/config.yaml")
-
-        mock_open.assert_called_once_with("dummy/path/config.yaml", "r")
-        mock_safe_load.assert_called_once()
-
+        submitter = WorkflowSubmitter(config=mock_config)
         assert submitter.hpc_config == mock_config["hpc"]
 
-    def test_submit_workflow_success(self, mock_open, mock_safe_load, mock_config):
+    def test_submit_workflow_success(self, mock_config):
         """Test the successful submission of a workflow."""
-        mock_safe_load.return_value = mock_config
-        submitter = WorkflowSubmitter(config_path="dummy/path/config.yaml")
+        submitter = WorkflowSubmitter(config=mock_config)
 
         case_path = "/local/path/case_001"
 
@@ -69,10 +60,9 @@ class TestWorkflowSubmitter:
             ]
             mock_subprocess.assert_has_calls(calls, any_order=False)
 
-    def test_submit_workflow_scp_failure(self, mock_open, mock_safe_load, mock_config):
+    def test_submit_workflow_scp_failure(self, mock_config):
         """Test that workflow submission fails if scp command fails."""
-        mock_safe_load.return_value = mock_config
-        submitter = WorkflowSubmitter(config_path="dummy/path/config.yaml")
+        submitter = WorkflowSubmitter(config=mock_config)
 
         case_path = "/local/path/case_001"
 
@@ -89,10 +79,9 @@ class TestWorkflowSubmitter:
             assert "SCP failed" in str(excinfo.value)
             mock_subprocess.assert_called_once()
 
-    def test_submit_workflow_ssh_failure(self, mock_open, mock_safe_load, mock_config):
+    def test_submit_workflow_ssh_failure(self, mock_config):
         """Test that workflow submission fails if ssh command fails."""
-        mock_safe_load.return_value = mock_config
-        submitter = WorkflowSubmitter(config_path="dummy/path/config.yaml")
+        submitter = WorkflowSubmitter(config=mock_config)
 
         case_path = "/local/path/case_001"
 

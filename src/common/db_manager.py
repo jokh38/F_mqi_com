@@ -1,7 +1,10 @@
 import sqlite3
-import yaml
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any
+
+
+# Define Korea Standard Time (KST) as UTC+9
+KST = timezone(timedelta(hours=9))
 
 
 class DatabaseManager:
@@ -9,21 +12,31 @@ class DatabaseManager:
     Manages all interactions with the SQLite database.
     """
 
-    def __init__(self, db_path: Optional[str] = None):
+    def __init__(
+        self,
+        db_path: Optional[str] = None,
+        config: Optional[Dict[str, Any]] = None,
+    ):
         """
         Initializes the DatabaseManager.
 
-        If db_path is not provided, it reads from the config file.
+        The database path is determined in one of two ways:
+        1. Directly via the `db_path` argument (primarily for testing).
+        2. From the `config` dictionary.
 
         Args:
             db_path: The path to the SQLite database file.
+            config: The application's configuration dictionary.
+
+        Raises:
+            ValueError: If neither db_path nor config is provided.
         """
         if db_path:
             self.db_path = db_path
-        else:
-            with open("config/config.yaml", "r") as f:
-                config = yaml.safe_load(f)
+        elif config:
             self.db_path = config["database"]["path"]
+        else:
+            raise ValueError("Either db_path or config must be provided.")
 
         self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
         # Use Row factory to allow accessing columns by name
@@ -74,7 +87,8 @@ class DatabaseManager:
         Returns:
             The ID of the newly inserted case.
         """
-        submitted_time = datetime.now()
+        # Get current time in KST and format as ISO 8601 string
+        submitted_time = datetime.now(KST).isoformat()
         self.cursor.execute(
             """
             INSERT INTO cases (case_path, status, progress, pueue_group, submitted_at)
@@ -97,6 +111,12 @@ class DatabaseManager:
         row = self.cursor.fetchone()
         return dict(row) if row else None
 
+    def get_cases_by_status(self, status: str) -> list[Dict[str, Any]]:
+        """Retrieves all cases with a given status."""
+        self.cursor.execute("SELECT * FROM cases WHERE status = ?", (status,))
+        rows = self.cursor.fetchall()
+        return [dict(row) for row in rows]
+
     def update_case_status(self, case_id: int, status: str, progress: int):
         """Updates the status and progress of a case."""
         self.cursor.execute(
@@ -111,7 +131,8 @@ class DatabaseManager:
 
     def update_case_completion(self, case_id: int, status: str):
         """Marks a case as 'completed' or 'failed' and sets progress to 100."""
-        completion_time = datetime.now()
+        # Get current time in KST and format as ISO 8601 string
+        completion_time = datetime.now(KST).isoformat()
         self.cursor.execute(
             """
             UPDATE cases

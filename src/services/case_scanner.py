@@ -1,5 +1,4 @@
 import logging
-import time
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
@@ -42,15 +41,13 @@ class CaseScanner:
         self.observer = Observer()
 
     def start(self):
-        """Starts the file system observer."""
+        """
+        Starts the file system observer in a background thread.
+        This method is non-blocking.
+        """
         self.observer.schedule(self.event_handler, self.watch_path, recursive=False)
         self.observer.start()
         logger.info(f"Started watching directory: {self.watch_path}")
-        try:
-            while True:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            self.stop()
 
     def stop(self):
         """Stops the file system observer."""
