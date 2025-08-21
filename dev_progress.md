@@ -1,98 +1,58 @@
-# Development Progress Log
+# MQI Communicator Debugging and Refinement Log
 
-## Phase 1: Code Tracing and Initial Analysis
+This document tracks the logical code flow analysis, identified issues, and resolutions for the MQI Communicator application.
 
-### 1. Entry Point: `src/main.py`
-- **Logical Flow**: The application starts by initializing the configuration, logging, and the `DatabaseManager`. It ensures GPU resources listed in `config.yaml` exist in the database.
-- A background thread for `CaseScanner` is started to watch for new case directories.
-- The main loop consists of two parts:
-    1.  **Monitoring**: Checks the status of `running` cases via `pueue` and updates their status to `completed` or `failed`.
-    2.  **Submission**: Fetches `submitted` cases and iterates through them. For each case, it attempts to acquire a GPU lock.
-- **Observation**: The logic in `main.py` appears sound and follows the dynamic allocation principle described in the old `dev_progress.md`. It correctly attempts to process multiple submitted cases in one cycle. The critical dependency for this process is the `db_manager.find_and_lock_any_available_gpu` method.
+## Initial State (Before Changes)
 
-### 2. Database Interaction: `src/common/db_manager.py`
-- **Analysis of `find_and_lock_any_available_gpu`**: This method is intended to atomically find and lock an available GPU to prevent race conditions.
-- **Code:**
-  ```python
-  def find_and_lock_any_available_gpu(self, case_id: int) -> Optional[str]:
-      with self.conn:
-          self.cursor.execute(
-              "SELECT pueue_group FROM gpu_resources WHERE status = 'available' LIMIT 1"
-          )
-          resource = self.cursor.fetchone()
-          if resource:
-              pueue_group = resource["pueue_group"]
-              self.cursor.execute(
-                  "UPDATE gpu_resources SET status = 'assigned', ... WHERE pueue_group = ? AND status = 'available'",
-                  (case_id, pueue_group),
-              )
-              if self.cursor.rowcount > 0:
-                  return pueue_group
-      return None
-  ```
+*   **Codebase:** A Python application designed to watch a directory for new cases, submit them to an HPC via `pueue`, and track their status in a SQLite database.
+*   **Components:**
+    *   `main.py`: Main application entry point and control loop.
+    *   `case_scanner.py`: Watches for new directories using `watchdog`.
+    *   `workflow_submitter.py`: Submits jobs to HPC using `scp` and `ssh`.
+    *   `db_manager.py`: Manages the SQLite database state.
+    *   `config.yaml`: Application configuration.
 
-### 3. Problem Identification: Race Condition in GPU Locking
-- **Issue**: The current implementation suffers from a "Time-of-check to time-of-use" (TOCTOU) race condition.
-- **Scenario**:
-    1. Two processes (P1, P2) call the function simultaneously.
-    2. The `SELECT` statement in both P1 and P2 can fetch the *same* available `pueue_group` before either process can run the `UPDATE`.
-    3. P1 runs its `UPDATE` and successfully locks the resource.
-    4. P2 runs its `UPDATE`, but the `WHERE ... status = 'available'` check fails because P1 has already changed the status. P2's update affects 0 rows.
-- **Impact**: P2 fails to acquire a lock and returns `None`, even if other GPU resources were available. This leads to inefficient resource utilization, as multiple processes might compete for the first-listed available GPU, ignoring others.
+---
 
-### 4. Proposed Solution
-- **Strategy**: The `SELECT` and `UPDATE` operations must be combined into a single, atomic query. This ensures that finding an available resource and claiming it happens in one indivisible step.
-- **Proposed Implementation**:
-  ```python
-  def find_and_lock_any_available_gpu(self, case_id: int) -> Optional[str]:
-      with self.conn:
-          # This atomic UPDATE finds and claims a resource in one step
-          self.cursor.execute(
-              """
-              UPDATE gpu_resources
-              SET status = 'assigned', assigned_case_id = ?
-              WHERE rowid = (
-                  SELECT rowid FROM gpu_resources
-                  WHERE status = 'available'
-                  ORDER BY pueue_group -- for deterministic selection
-                  LIMIT 1
-              )
-              """,
-              (case_id,)
-          )
-          # If the update succeeded, find out which group was locked
-          if self.cursor.rowcount > 0:
-              self.cursor.execute(
-                  "SELECT pueue_group FROM gpu_resources WHERE assigned_case_id = ?",
-                  (case_id,)
-              )
-              resource = self.cursor.fetchone()
-              if resource:
-                  return resource["pueue_group"]
-      return None
-  ```
-This new implementation is free of race conditions and will correctly allocate distinct available GPUs to concurrent processes.
+## Trace 1: Application Startup
 
-## Phase 2: Solution Implementation
+### Code Flow Analysis
+1.  Execution begins in `src/main.py` at the `if __name__ == "__main__"` block.
+2.  The `config.yaml` file is opened and parsed to create an `initial_config` object.
+3.  `setup_logging(initial_config)` is called, which correctly configures the root logger with file and stream handlers.
+4.  The `main()` function is called.
+5.  Inside `main()`, the `config.yaml` file is opened and parsed **a second time**.
+6.  `setup_logging(config)` is called **a second time**.
 
-### 1. `db_manager.py` Correction
-- **Status**: Implemented.
-- **Action**: The `find_and_lock_any_available_gpu` method in `src/common/db_manager.py` was refactored.
-- **Change**: The previous non-atomic `SELECT` followed by `UPDATE` was replaced with a single, atomic `UPDATE ... WHERE rowid = (SELECT ...)` statement.
-- **Outcome**: This change resolves the identified race condition, ensuring that concurrent processes can safely and efficiently lock separate available GPU resources without conflict. The system's resource allocation is now robust.
+### Problem 1: Duplicate Logging
+*   **Issue:** Calling `setup_logging()` twice causes a second set of identical handlers to be added to the root logger. As a result, every log message generated by the application will be duplicated in both the console output and the log file. This makes logs noisy and difficult to read.
+*   **Solution:** Refactor the entry point to load the configuration and set up logging only once. The loaded `config` object will be passed as an argument to the `main` function, which will no longer be responsible for these setup tasks.
 
-## Phase 3: Continuing Code Trace and Deeper Analysis
+### Resolution for Problem 1
+*   **Action:** Modified `src/main.py`.
+    1.  Changed the `main` function signature to `main(config: Dict[str, Any]) -> None`.
+    2.  Removed the redundant configuration loading and the second call to `setup_logging()` from within the `main` function.
+    3.  Updated the call in the `if __name__ == "__main__"` block to `main(initial_config)`.
+*   **Status:** **Resolved.**
 
-### 1. Service Analysis: `src/services/case_scanner.py`
-- **Analysis**: The `CaseScanner` uses a `StableDirectoryEventHandler` to monitor for new directories and wait for file activity to cease before adding them to the database. This is intended to prevent processing of incomplete cases.
-- **Problem Identification**: A logic flaw was found in the `on_any_event` method. The timer for a new directory is only reset for subsequent file events if the timer has *already* been created. If a file creation event is detected by the OS before the directory creation event, the timer is never started for that file's parent directory, which can lead to the case being processed prematurely or not at all.
-- **Proposed Solution**: The `on_any_event` method should be made stateless and more robust. For any given filesystem event, it should programmatically determine the top-level case directory (the direct child of the main `watch_path`) and reset the timer for that directory. This removes the dependency on the order of events and ensures any activity within a case directory correctly and consistently resets the stability timer.
+---
 
-### 2. `case_scanner.py` Correction
-- **Status**: Implemented.
-- **Action**: The `StableDirectoryEventHandler` class was refactored to be aware of the `watch_path`. The `on_any_event` method was entirely replaced.
-- **Change**:
-    1.  The `StableDirectoryEventHandler` constructor now accepts `watch_path`.
-    2.  The `CaseScanner` now passes the `watch_path` to the handler.
-    3.  The new `on_any_event` logic robustly identifies the top-level case directory for any filesystem event and resets its stability timer. It no longer depends on receiving a "directory created" event first.
-- **Outcome**: The case scanner is now resilient to out-of-order filesystem events, preventing cases from being missed or processed prematurely. This makes the case ingestion mechanism significantly more reliable.
+## Trace 2: Case Ingestion and Processing
+
+### Code Flow Analysis
+1.  A new directory is copied into the `watch_path` (`new_cases`).
+2.  `CaseScanner` detects file system events and uses a debouncing timer to wait for the directory to become "stable" (no new events for 5 seconds).
+3.  After the delay, the timer calls `_process_directory` with the path to the new case.
+4.  `_process_directory` adds the case to the database with `status='submitted'`.
+5.  The main loop picks up the `submitted` case.
+6.  It atomically locks an available GPU resource using `db_manager.find_and_lock_any_available_gpu`.
+7.  It calls `workflow_submitter.submit_workflow` to `scp` the files and `ssh` to run `pueue add`.
+8.  The case status is updated to `running`.
+
+### Problem 2: Ghost Case Creation
+*   **Issue:** The `_process_directory` method in `case_scanner.py` does not verify that the directory path still exists on the filesystem before adding it to the database. If a directory is created and then quickly deleted before the 5-second stability timer fires, a "ghost" case will be created in the database for a non-existent directory.
+*   **Impact:** This ghost case will be picked up by the main loop, wastefully lock a GPU resource, and then fail during the `scp` transfer. The system recovers by marking the case as `failed`, but it's inefficient and creates confusing "failed" entries in the database.
+*   **Solution:** Add a check in `_process_directory` in `src/services/case_scanner.py` to ensure the directory `os.path.isdir()` is true before attempting to add it to the database.
+*   **Status:** **Resolved.**
+
+---

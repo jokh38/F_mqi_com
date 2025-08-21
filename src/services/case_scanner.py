@@ -42,6 +42,13 @@ class StableDirectoryEventHandler(FileSystemEventHandler):
             # Remove the timer from the tracking dictionary
             self.timers.pop(path_str, None)
 
+        # Before processing, ensure the directory still exists.
+        if not os.path.isdir(path_str):
+            logger.warning(
+                f"Directory '{path_str}' was deleted before it could be processed. Skipping."
+            )
+            return
+
         logger.info(f"Directory '{path_str}' is stable. Adding to database.")
         try:
             # Check if the case already exists to prevent duplicates from multiple events
