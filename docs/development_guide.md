@@ -92,10 +92,10 @@ If this command produces no output, your code is clean.
 
 ### Step 3: Type Check with `mypy`
 
-`mypy` performs static type checking to find type-related errors.
+`mypy` performs static type checking to find type-related errors. To enforce our strict typing policy, we use the `--disallow-untyped-defs` flag, which ensures every function is fully annotated.
 
 ```bash
-mypy src
+mypy --disallow-untyped-defs src
 ```
 
 **Handling Missing Stubs:**
@@ -121,7 +121,7 @@ To avoid issues, please follow this sequence before every commit:
     ```
 3.  **Type-check your code:**
     ```bash
-    mypy src
+    mypy --disallow-untyped-defs src
     ```
 4.  **Run all tests:**
     ```bash

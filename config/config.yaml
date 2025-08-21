@@ -1,3 +1,6 @@
+logging:
+  path: "communicator_local.log"
+
 database:
   path: "data/mqi_communicator.db"
 
@@ -5,9 +8,14 @@ hpc:
   host: "your_hpc_hostname"
   user: "your_username"
   remote_base_dir: "/path/to/remote/dir"
+  # The command to be executed on the remote machine after 'cd'ing into the case directory.
+  remote_command: "python interpreter.py && python moquisim.py"
 
 scanner:
   watch_path: "new_cases" # Directory to watch for new cases
+
+main_loop:
+  sleep_interval_seconds: 10 # Time to wait between polling for new cases
 
 pueue:
   default_group: "default" # Default pueue group for new tasks
