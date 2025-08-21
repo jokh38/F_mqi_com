@@ -13,5 +13,5 @@ __pycache__/
 test_communicator.db
 
 # Application data & logs
-data/
+database/
 communicator_local.log
