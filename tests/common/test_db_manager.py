@@ -230,10 +230,10 @@ def test_get_cases_by_status(db_manager: DatabaseManager):
     assert running[0]["case_id"] == id3
 
 
-def test_update_case_completion_clears_resource_fields(db_manager: DatabaseManager):
+def test_update_case_completion_preserves_historical_data(db_manager: DatabaseManager):
     """
     Tests that update_case_completion correctly marks a case as complete
-    AND clears the pueue_group and pueue_task_id fields.
+    AND PRESERVES the pueue_group and pueue_task_id fields for historical tracking.
     """
     # 1. Setup a case as if it were running
     case_id = db_manager.add_case("/path/to/completed_case")
@@ -258,6 +258,6 @@ def test_update_case_completion_clears_resource_fields(db_manager: DatabaseManag
     assert completed_case["status"] == "completed"
     assert completed_case["progress"] == 100
     assert completed_case["completed_at"] is not None
-    # Verify that resource association is cleared
-    assert completed_case["pueue_group"] is None
-    assert completed_case["pueue_task_id"] is None
+    # Verify that historical data is PRESERVED
+    assert completed_case["pueue_group"] == "gpu_a"
+    assert completed_case["pueue_task_id"] == 12345

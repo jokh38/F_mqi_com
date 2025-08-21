@@ -175,9 +175,7 @@ class DatabaseManager:
             SET status = ?,
                 progress = 100,
                 completed_at = ?,
-                status_updated_at = ?,
-                pueue_group = NULL,
-                pueue_task_id = NULL
+                status_updated_at = ?
             WHERE case_id = ?
             """,
             (status, completion_time, completion_time, case_id),
