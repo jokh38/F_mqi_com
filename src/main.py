@@ -219,25 +219,33 @@ def main(config: Dict[str, Any]) -> None:
                             f"Case ID {case_id} (Task {task_id}) has remote status: '{status}'."
                         )
 
-                        # Handle terminal states (success, failure, or not found on remote)
-                        if status in ("success", "failure", "not_found"):
-                            final_status = "completed" if status == "success" else "failed"
-                            # The order here is critical to prevent resource leaks on crash.
-                            # Release the resource FIRST, then update the case.
-                            # If a crash happens after release but before update, the case
-                            # will be re-processed harmlessly on the next run.
+                        # --- Handle terminal states ---
+                        # The order of operations is critical to prevent resource leaks on crash.
+                        # Release the resource FIRST, then update the case status.
+                        if status == "success":
                             db_manager.release_gpu_resource(case_id)
                             db_manager.update_case_completion(
-                                case_id, status=final_status
+                                case_id, status="completed"
                             )
-                            if final_status == "completed":
-                                logging.info(
-                                    f"Case ID {case_id} successfully completed. GPU resource released."
-                                )
-                            else:
-                                logging.error(
-                                    f"Case ID {case_id} failed (status: {status}). GPU resource released."
-                                )
+                            logging.info(
+                                f"Case ID {case_id} successfully completed. GPU resource released."
+                            )
+                        elif status == "failure":
+                            db_manager.release_gpu_resource(case_id)
+                            db_manager.update_case_completion(case_id, status="failed")
+                            logging.error(
+                                f"Case ID {case_id} failed on remote HPC. GPU resource released."
+                            )
+                        elif status == "not_found":
+                            # This is an ambiguous state. The job might have succeeded or
+                            # failed and was then pruned from the remote's history.
+                            # We pessimistically mark it as failed but log a detailed warning.
+                            db_manager.release_gpu_resource(case_id)
+                            db_manager.update_case_completion(case_id, status="failed")
+                            logging.warning(
+                                f"Case ID {case_id} (Task {task_id}) was not found on remote HPC. "
+                                "This is ambiguous. Marking as failed. GPU resource released."
+                            )
 
                         # If the HPC is unreachable or the job is still running, do nothing.
                         # The timeout logic above will eventually catch any truly stuck cases.

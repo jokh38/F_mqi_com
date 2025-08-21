@@ -154,6 +154,9 @@ def test_main_loop_submits_case_with_available_gpu(mock_dependencies):
         [], [], [submitted_case], SystemExit
     ]
 
+    # Simulate that no resource is currently assigned
+    mocks["db"].get_gpu_resource_by_case_id.return_value = None
+
     # Simulate a successful GPU lock
     mocks["db"].find_and_lock_any_available_gpu.return_value = "gpu_b"
     mocks["submitter"].submit_workflow.return_value = 201
@@ -187,6 +190,9 @@ def test_main_loop_defers_submission_when_no_gpu_available(mock_dependencies):
         [], [], [submitted_case], SystemExit
     ]
 
+    # Simulate that no resource is currently assigned
+    mocks["db"].get_gpu_resource_by_case_id.return_value = None
+
     # Simulate NO available GPU
     mocks["db"].find_and_lock_any_available_gpu.return_value = None
 
@@ -212,6 +218,9 @@ def test_main_loop_handles_submission_id_failure(mock_dependencies):
     mocks["db"].get_cases_by_status.side_effect = [
         [], [], [submitted_case], SystemExit
     ]
+
+    # Simulate that no resource is currently assigned
+    mocks["db"].get_gpu_resource_by_case_id.return_value = None
 
     # Simulate a successful lock but a failed submission (no ID returned)
     mocks["db"].find_and_lock_any_available_gpu.return_value = "gpu_a"
