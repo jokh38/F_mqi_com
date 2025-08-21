@@ -103,8 +103,11 @@ class WorkflowSubmitter:
         base_remote_command = self.hpc_config.get(
             "remote_command", "python interpreter.py && python moquisim.py"
         )
-        # The command for pueue must be a single string for `pueue add`
-        remote_command = f"cd {shlex.quote(remote_path)} && {base_remote_command}"
+        # This command will be executed by `sh -c` on the remote machine.
+        # This ensures that shell features like `cd` and `&&` are interpreted correctly.
+        remote_command_to_execute = (
+            f"cd {shlex.quote(remote_path)} && {base_remote_command}"
+        )
 
         ssh_command = [
             self.ssh_cmd,
@@ -116,7 +119,9 @@ class WorkflowSubmitter:
             "--group",
             pueue_group,
             "--",
-            remote_command,
+            "sh",
+            "-c",
+            remote_command_to_execute,
         ]
         try:
             logger.info(

@@ -113,6 +113,14 @@ class DatabaseManager:
         row = self.cursor.fetchone()
         return dict(row) if row else None
 
+    def get_gpu_resource_by_case_id(self, case_id: int) -> Optional[Dict[str, Any]]:
+        """Retrieves the GPU resource assigned to a specific case."""
+        self.cursor.execute(
+            "SELECT * FROM gpu_resources WHERE assigned_case_id = ?", (case_id,)
+        )
+        row = self.cursor.fetchone()
+        return dict(row) if row else None
+
     def get_case_by_path(self, case_path: str) -> Optional[Dict[str, Any]]:
         """Retrieves a case by its path."""
         self.cursor.execute("SELECT * FROM cases WHERE case_path = ?", (case_path,))

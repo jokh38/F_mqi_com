@@ -257,10 +257,25 @@ def main(config: Dict[str, Any]) -> None:
                         case_id = case_to_process["case_id"]
                         case_path = case_to_process["case_path"]
 
-                        # Try to lock ANY available GPU resource for this case
-                        locked_pueue_group = db_manager.find_and_lock_any_available_gpu(
+                        # --- Robust Resource Locking ---
+                        # This logic makes the submission step idempotent. If the app crashed
+                        # after assigning a resource but before changing the case status,
+                        # this will recover the assigned resource instead of locking a new one.
+                        locked_pueue_group = None
+                        assigned_resource = db_manager.get_gpu_resource_by_case_id(
                             case_id
                         )
+
+                        if assigned_resource:
+                            logging.info(
+                                f"Recovered assigned GPU resource '{assigned_resource['pueue_group']}' for submitted case ID: {case_id}"
+                            )
+                            locked_pueue_group = assigned_resource["pueue_group"]
+                        else:
+                            # No resource assigned, try to lock a new one.
+                            locked_pueue_group = (
+                                db_manager.find_and_lock_any_available_gpu(case_id)
+                            )
 
                         if locked_pueue_group:
                             # If we found a GPU, process the case
