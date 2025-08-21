@@ -26,9 +26,11 @@ class StableDirectoryEventHandler(FileSystemEventHandler):
 
     def __init__(
         self,
+        watch_path: str,
         db_manager: DatabaseManager,
         stability_delay: float = STABILITY_DELAY_SECONDS,
     ):
+        self.watch_path = watch_path
         self.db_manager = db_manager
         self.stability_delay = stability_delay
         self.timers: Dict[str, threading.Timer] = {}
@@ -59,27 +61,44 @@ class StableDirectoryEventHandler(FileSystemEventHandler):
 
     def on_any_event(self, event: FileSystemEvent) -> None:
         """
-        Catches all filesystem events.
+        Catches all filesystem events and resets the stability timer for the
+        relevant top-level case directory. This approach is robust against
+        out-of-order event delivery.
         """
-        if event.is_directory:
-            # If a new directory is created, start a timer for it.
-            if event.event_type == "created":
-                src_path_str = os.fsdecode(event.src_path)
-                logger.info(f"New directory detected: {src_path_str}. Starting stability timer.")
-                self._reset_timer(src_path_str)
-        else:
-            # If a file inside a potential case directory changes, reset the timer.
-            # This handles files being created, modified, or moved within the directory.
-            src_path = Path(os.fsdecode(event.src_path))
-            parent_dir_str = str(src_path.parent)
+        try:
+            # Use a set to handle events that have both src_path and dest_path (e.g., move)
+            paths_to_check = set()
+            if hasattr(event, 'src_path'):
+                paths_to_check.add(Path(os.fsdecode(event.src_path)))
+            if hasattr(event, 'dest_path'):
+                paths_to_check.add(Path(os.fsdecode(event.dest_path)))
 
-            # Check if the parent directory is one we are watching
-            with self.lock:
-                if parent_dir_str in self.timers:
-                    logger.debug(
-                        f"Activity detected in '{parent_dir_str}'. Resetting timer."
-                    )
-                    self._reset_timer(parent_dir_str)
+            if not paths_to_check:
+                return
+
+            watch_path = Path(self.watch_path).resolve()
+
+            # Determine the case directory for each relevant path
+            case_dirs_to_reset = set()
+            for path in paths_to_check:
+                # Resolve the path to handle relative paths correctly
+                path = path.resolve()
+
+                # Check if the event path is inside the watched directory
+                if watch_path in path.parents:
+                    relative_path = path.relative_to(watch_path)
+                    if relative_path.parts:
+                        case_dir_name = relative_path.parts[0]
+                        case_dir_path = str(watch_path / case_dir_name)
+                        case_dirs_to_reset.add(case_dir_path)
+
+            # Reset the timer for each affected case directory
+            for case_dir in case_dirs_to_reset:
+                logger.debug(f"Activity for case '{case_dir}' detected. Resetting timer.")
+                self._reset_timer(case_dir)
+
+        except Exception as e:
+            logger.error(f"Error processing filesystem event: {e}", exc_info=True)
 
     def _reset_timer(self, path_str: str) -> None:
         """Resets the stability timer for a given path."""
@@ -102,7 +121,9 @@ class CaseScanner:
     def __init__(self, watch_path: str, db_manager: DatabaseManager) -> None:
         self.watch_path = watch_path
         self.db_manager = db_manager
-        self.event_handler = StableDirectoryEventHandler(db_manager=self.db_manager)
+        self.event_handler = StableDirectoryEventHandler(
+            watch_path=self.watch_path, db_manager=self.db_manager
+        )
         # We need to watch recursively to detect file changes inside new directories
         self.observer = Observer()
         self.observer.schedule(self.event_handler, self.watch_path, recursive=True)

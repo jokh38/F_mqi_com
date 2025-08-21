@@ -134,64 +134,87 @@ def main() -> None:
 
                 # --- Part 2: Process new SUBMITTED cases with dynamic resource allocation ---
                 submitted_cases = db_manager.get_cases_by_status("submitted")
-                if not submitted_cases:
-                    # No new cases, so we can skip the resource check.
-                    pass
-                else:
-                    logging.info(f"Found {len(submitted_cases)} submitted case(s) to process.")
+                if submitted_cases:
+                    logging.info(
+                        f"Found {len(submitted_cases)} submitted case(s) to process."
+                    )
 
-                    # Try to lock a GPU for the first available case
-                    case_to_process = submitted_cases[0]
-                    case_id = case_to_process["case_id"]
-                    case_path = case_to_process["case_path"]
+                    # Iterate through submitted cases and try to assign them to available GPUs
+                    for case_to_process in submitted_cases:
+                        case_id = case_to_process["case_id"]
+                        case_path = case_to_process["case_path"]
 
-                    # Try to lock ANY available GPU resource for this case
-                    locked_pueue_group = db_manager.find_and_lock_any_available_gpu(case_id)
-
-                    if not locked_pueue_group:
-                        logging.info("No available GPU resource at the moment. Will retry later.")
-                    else:
-                        logging.info(
-                            f"GPU resource '{locked_pueue_group}' locked for case ID: {case_id}"
+                        # Try to lock ANY available GPU resource for this case
+                        locked_pueue_group = db_manager.find_and_lock_any_available_gpu(
+                            case_id
                         )
-                        try:
-                            # Assign the locked group to the case
-                            db_manager.update_case_pueue_group(case_id, locked_pueue_group)
 
-                            # Mark as 'submitting' to prevent re-processing
-                            db_manager.update_case_status(
-                                case_id, status="submitting", progress=10
+                        if locked_pueue_group:
+                            # If we found a GPU, process the case
+                            logging.info(
+                                f"GPU resource '{locked_pueue_group}' locked for case ID: {case_id}"
                             )
+                            try:
+                                # Assign the locked group to the case
+                                db_manager.update_case_pueue_group(
+                                    case_id, locked_pueue_group
+                                )
 
-                            pueue_task_id = workflow_submitter.submit_workflow(
-                                case_path=case_path, pueue_group=locked_pueue_group
-                            )
-
-                            if pueue_task_id is not None:
-                                db_manager.update_case_pueue_task_id(case_id, pueue_task_id)
+                                # Mark as 'submitting' to prevent re-processing
                                 db_manager.update_case_status(
-                                    case_id, status="running", progress=30
+                                    case_id, status="submitting", progress=10
                                 )
-                                logging.info(
-                                    f"Case ID: {case_id} successfully submitted to '{locked_pueue_group}' as Task ID: {pueue_task_id}."
-                                )
-                            else:
-                                # Handle case where submission succeeded but ID parsing failed
-                                logging.error(
-                                    f"Failed to get Pueue Task ID for case ID: {case_id}."
-                                )
-                                db_manager.update_case_completion(case_id, status="failed")
-                                db_manager.release_gpu_resource(case_id) # Release lock on failure
-                                logging.info(f"Released GPU resource for failed case ID: {case_id}.")
 
-                        except Exception as e:
-                            logging.error(
-                                f"Failed to process case ID: {case_id}. Error: {e}",
-                                exc_info=True,
+                                pueue_task_id = workflow_submitter.submit_workflow(
+                                    case_path=case_path, pueue_group=locked_pueue_group
+                                )
+
+                                if pueue_task_id is not None:
+                                    db_manager.update_case_pueue_task_id(
+                                        case_id, pueue_task_id
+                                    )
+                                    db_manager.update_case_status(
+                                        case_id, status="running", progress=30
+                                    )
+                                    logging.info(
+                                        f"Case ID: {case_id} successfully submitted to '{locked_pueue_group}' as Task ID: {pueue_task_id}."
+                                    )
+                                else:
+                                    # Handle case where submission succeeded but ID parsing failed
+                                    logging.error(
+                                        f"Failed to get Pueue Task ID for case ID: {case_id}."
+                                    )
+                                    db_manager.update_case_completion(
+                                        case_id, status="failed"
+                                    )
+                                    db_manager.release_gpu_resource(
+                                        case_id
+                                    )  # Release lock on failure
+                                    logging.info(
+                                        f"Released GPU resource for failed case ID: {case_id}."
+                                    )
+
+                            except Exception as e:
+                                logging.error(
+                                    f"Failed to process case ID: {case_id}. Error: {e}",
+                                    exc_info=True,
+                                )
+                                db_manager.update_case_completion(
+                                    case_id, status="failed"
+                                )
+                                db_manager.release_gpu_resource(
+                                    case_id
+                                )  # Release lock on failure
+                                logging.info(
+                                    f"Released GPU resource for failed case ID: {case_id}."
+                                )
+                        else:
+                            # If we failed to get a lock, it means no GPUs are available.
+                            # We can stop trying for this cycle.
+                            logging.info(
+                                "No more available GPU resources at this time. Will retry in the next cycle."
                             )
-                            db_manager.update_case_completion(case_id, status="failed")
-                            db_manager.release_gpu_resource(case_id) # Release lock on failure
-                            logging.info(f"Released GPU resource for failed case ID: {case_id}.")
+                            break  # Exit the for loop
 
             except Exception as e:
                 # Catch exceptions in the main loop itself to prevent crashing

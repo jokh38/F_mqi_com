@@ -65,10 +65,10 @@ def test_main_loop_handles_running_case_success(mock_dependencies):
     mocks = mock_dependencies
     running_case = {"case_id": 1, "pueue_task_id": 101}
     # Simulate one loop with a running case, then a clean exit
-    mocks["db"].get_cases_by_status.side_effect = [[running_case], [], KeyboardInterrupt]
+    mocks["db"].get_cases_by_status.side_effect = [[running_case], [], SystemExit]
     mocks["submitter"].get_workflow_status.return_value = "success"
 
-    with pytest.raises(KeyboardInterrupt):
+    with pytest.raises(SystemExit):
         main()
 
     mocks["submitter"].get_workflow_status.assert_called_once_with(101)
@@ -79,10 +79,10 @@ def test_main_loop_handles_running_case_failure(mock_dependencies):
     """Tests a 'running' case that fails."""
     mocks = mock_dependencies
     running_case = {"case_id": 2, "pueue_task_id": 102}
-    mocks["db"].get_cases_by_status.side_effect = [[running_case], [], KeyboardInterrupt]
+    mocks["db"].get_cases_by_status.side_effect = [[running_case], [], SystemExit]
     mocks["submitter"].get_workflow_status.return_value = "failure"
 
-    with pytest.raises(KeyboardInterrupt):
+    with pytest.raises(SystemExit):
         main()
 
     mocks["submitter"].get_workflow_status.assert_called_once_with(102)
@@ -100,13 +100,13 @@ def test_main_loop_submits_case_with_available_gpu(mock_dependencies):
     mocks = mock_dependencies
     submitted_case = {"case_id": 4, "case_path": "/path/new"}
     # Loop 1: No running, one submitted. Loop 2: Clean exit.
-    mocks["db"].get_cases_by_status.side_effect = [[], [submitted_case], KeyboardInterrupt]
+    mocks["db"].get_cases_by_status.side_effect = [[], [submitted_case], SystemExit]
 
     # Simulate a successful GPU lock
     mocks["db"].find_and_lock_any_available_gpu.return_value = "gpu_b"
     mocks["submitter"].submit_workflow.return_value = 201
 
-    with pytest.raises(KeyboardInterrupt):
+    with pytest.raises(SystemExit):
         main()
 
     # Verify the dynamic allocation logic
@@ -128,12 +128,12 @@ def test_main_loop_defers_submission_when_no_gpu_available(mock_dependencies):
     """
     mocks = mock_dependencies
     submitted_case = {"case_id": 5, "case_path": "/path/wait"}
-    mocks["db"].get_cases_by_status.side_effect = [[], [submitted_case], KeyboardInterrupt]
+    mocks["db"].get_cases_by_status.side_effect = [[], [submitted_case], SystemExit]
 
     # Simulate NO available GPU
     mocks["db"].find_and_lock_any_available_gpu.return_value = None
 
-    with pytest.raises(KeyboardInterrupt):
+    with pytest.raises(SystemExit):
         main()
 
     # Verify we checked for a GPU
@@ -151,13 +151,13 @@ def test_main_loop_handles_submission_id_failure(mock_dependencies):
     """
     mocks = mock_dependencies
     submitted_case = {"case_id": 6, "case_path": "/path/id_fail"}
-    mocks["db"].get_cases_by_status.side_effect = [[], [submitted_case], KeyboardInterrupt]
+    mocks["db"].get_cases_by_status.side_effect = [[], [submitted_case], SystemExit]
 
     # Simulate a successful lock but a failed submission (no ID returned)
     mocks["db"].find_and_lock_any_available_gpu.return_value = "gpu_a"
     mocks["submitter"].submit_workflow.return_value = None
 
-    with pytest.raises(KeyboardInterrupt):
+    with pytest.raises(SystemExit):
         main()
 
     # Verify lock and submission attempt
