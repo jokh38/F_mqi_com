@@ -222,10 +222,14 @@ def main(config: Dict[str, Any]) -> None:
                         # Handle terminal states (success, failure, or not found on remote)
                         if status in ("success", "failure", "not_found"):
                             final_status = "completed" if status == "success" else "failed"
+                            # The order here is critical to prevent resource leaks on crash.
+                            # Release the resource FIRST, then update the case.
+                            # If a crash happens after release but before update, the case
+                            # will be re-processed harmlessly on the next run.
+                            db_manager.release_gpu_resource(case_id)
                             db_manager.update_case_completion(
                                 case_id, status=final_status
                             )
-                            db_manager.release_gpu_resource(case_id)
                             if final_status == "completed":
                                 logging.info(
                                     f"Case ID {case_id} successfully completed. GPU resource released."

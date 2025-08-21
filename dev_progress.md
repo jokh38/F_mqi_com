@@ -7,7 +7,7 @@
 ### Logical Execution Flow Trace
 
 1.  **Program Start (`src/main.py`)**: The application starts by loading the `config/config.yaml` file.
-2.  **Logging Setup**: `setup_logging` is called, which correctly configures timezone-aware logging to both a file and the console.
+2.  **Logging Setup**: `setup_logging` is called, which correctly acks timezone-aware logging to both a file and the console.
 3.  **Component Initialization**:
     *   `DatabaseManager` is initialized. It connects to the SQLite database specified in the config and calls `init_db()` to create the `cases` and `gpu_resources` tables if they don't exist.
     *   GPU resources listed in the config (`pueue.groups`) are added to the `gpu_resources` table via `ensure_gpu_resource_exists`. This correctly populates the available resources.
@@ -42,3 +42,21 @@
 **Resolution (2025-08-21)**:
 1.  A new method, `get_gpu_resource_by_case_id(case_id)`, was added to `DatabaseManager` to find which GPU (if any) is assigned to a case.
 2.  The logic in `main.py` for handling `submitted` cases was updated. Before attempting to lock a new GPU, it now calls the new method. If a resource is already assigned (recovering from a crash), it uses that one. Otherwise, it attempts to lock a new one. This makes the submission step robust against this specific crash scenario.
+
+---
+## Second Analysis and Resolution Cycle
+
+**Date:** 2025-08-21
+
+### Deeper Logical Execution Flow Trace
+
+After resolving the initial problems, a second, more detailed analysis of the application's state transitions was performed to identify more subtle race conditions or crash-related bugs. The trace focused on the points where the application interacts with the database across multiple steps. The key finding related to the `running` -> `completed`/`failed` transition.
+
+### Problem 3 (Resolved)
+
+**File**: `src/main.py`
+**Function**: `main` (within the `running` cases loop)
+
+**Problem Description**: There was a subtle but critical bug in the order of operations when a `running` case was found to be finished. The code first updated the case's status to `completed` or `failed`, and *then* released the GPU resource. If a crash occurs between these two database calls, the GPU resource would be permanently orphaned. On restart, the application would not process the case anymore (since it's already marked `completed`), so the `release_gpu_resource` call would never be made again.
+
+**Resolution (2025-08-21)**: The order of operations has been reversed. The application now releases the GPU resource *first* and then updates the case's status. This ensures that even if a crash occurs after the resource is released but before the case is marked completed, the system can gracefully recover. On the next run, the `running` case will be processed again, the GPU will be released again (a harmless no-op), and the case status will be correctly updated. This prevents the resource leak.
