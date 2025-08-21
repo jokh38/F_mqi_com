@@ -107,21 +107,44 @@ MQI_Communicator/
 # src/main.py
 import logging
 from logging.handlers import RotatingFileHandler
+from datetime import datetime, timezone, timedelta
+from typing import Optional, Dict, Any
 
-def setup_logging():
-    """애플리케이션 파일 로깅을 설정합니다."""
-    log_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    log_handler = RotatingFileHandler(
-        'communicator_local.log', 
-        maxBytes=5*1024*1024, 
-        backupCount=5
-    )
+# Define Korea Standard Time (KST)
+KST = timezone(timedelta(hours=9))
+
+
+class KSTFormatter(logging.Formatter):
+    """A logging formatter that uses KST for timestamps."""
+
+    def formatTime(
+        self, record: logging.LogRecord, datefmt: Optional[str] = None
+    ) -> str:
+        dt = datetime.fromtimestamp(record.created, KST)
+        if datefmt:
+            return dt.strftime(datefmt)
+        return dt.isoformat()
+
+
+def setup_logging(config: Dict[str, Any]) -> None:
+    """Sets up file-based, timezone-aware logging for the application."""
+    log_config = config.get("logging", {})
+    log_path = log_config.get("path", "communicator_fallback.log")
+
+    log_formatter = KSTFormatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    log_handler = RotatingFileHandler(log_path, maxBytes=5 * 1024 * 1024, backupCount=5)
     log_handler.setFormatter(log_formatter)
-    
+
     root_logger = logging.getLogger()
-    root_logger.setLevel(logging.DEBUG)
+    root_logger.setLevel(logging.INFO)
     root_logger.addHandler(log_handler)
-    logging.info("Logger has been configured.")
+
+    # Add a console handler for immediate feedback
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(log_formatter)
+    root_logger.addHandler(console_handler)
+
+    logging.info(f"Logger has been configured. Logging to: {log_path}")
 ```
 
   * **확인 방법**: VS Code 등 텍스트 편집기에서 `communicator_local.log` 파일을 열어 실시간으로 변경 사항을 확인합니다.

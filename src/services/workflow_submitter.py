@@ -51,8 +51,9 @@ class WorkflowSubmitter:
         host = self.hpc_config["host"]
 
         # 1. Transfer files using scp
+        scp_cmd = self.hpc_config.get("scp_command", "scp")
         scp_command = [
-            "scp",
+            scp_cmd,
             "-r",
             case_path,
             f"{user}@{host}:{self.hpc_config['remote_base_dir']}",
@@ -76,10 +77,13 @@ class WorkflowSubmitter:
         )
         remote_command = f"cd {shlex.quote(remote_path)} && {base_remote_command}"
 
+        ssh_cmd = self.hpc_config.get("ssh_command", "ssh")
+        pueue_cmd = self.hpc_config.get("pueue_command", "pueue")
+
         ssh_command = [
-            "ssh",
+            ssh_cmd,
             f"{user}@{host}",
-            "pueue",
+            pueue_cmd,
             "add",
             "--group",
             pueue_group,

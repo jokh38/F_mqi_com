@@ -10,6 +10,10 @@ hpc:
   remote_base_dir: "/path/to/remote/dir"
   # The command to be executed on the remote machine after 'cd'ing into the case directory.
   remote_command: "python interpreter.py && python moquisim.py"
+  # System commands
+  scp_command: "scp"
+  ssh_command: "ssh"
+  pueue_command: "pueue"
 
 scanner:
   watch_path: "new_cases" # Directory to watch for new cases

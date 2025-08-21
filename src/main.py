@@ -9,6 +9,9 @@ from src.common.db_manager import DatabaseManager
 from src.services.case_scanner import CaseScanner
 from src.services.workflow_submitter import WorkflowSubmitter
 
+# Define the path to the configuration file
+CONFIG_PATH = "config/config.yaml"
+
 # Define Korea Standard Time (KST)
 KST = timezone(timedelta(hours=9))
 
@@ -56,7 +59,7 @@ def main() -> None:
 
     try:
         # 1. Load Configuration
-        with open("config/config.yaml", "r") as f:
+        with open(CONFIG_PATH, "r") as f:
             config = yaml.safe_load(f)
 
         # 2. Setup Logging (as early as possible)
@@ -147,11 +150,11 @@ def main() -> None:
 if __name__ == "__main__":
     # Load config just for logging setup before the main function
     try:
-        with open("config/config.yaml", "r") as f:
+        with open(CONFIG_PATH, "r") as f:
             initial_config = yaml.safe_load(f)
         setup_logging(initial_config)
     except FileNotFoundError:
-        print("ERROR: config/config.yaml not found. Cannot configure logging.")
+        print(f"ERROR: {CONFIG_PATH} not found. Cannot configure logging.")
     except Exception as e:
         print(f"ERROR: Failed to configure logging from config.yaml: {e}")
 
