@@ -46,3 +46,37 @@ This document tracks the logical execution flow of the MQI Communicator applicat
 - **`dev_progress.md`**: This file has been created to provide a comprehensive record of the debugging process and its findings.
 
 The application is now considered logically sound and robust for deployment.
+
+---
+
+# Phase 3: Directory Structure Refactoring
+
+## 3.1. Objective
+- The objective is to change the name of the directory where the database is stored from `data` to `database`.
+- This requires updating the configuration and verifying that no part of the application relies on the old hardcoded path.
+
+## 3.2. Logical Execution Trace and Problem Identification
+
+### Step 1: Program Startup
+- **Trace**: The application starts, and `src/main.py` loads the configuration from `config/config.yaml`.
+- **Code**: `db_manager = DatabaseManager(config=config)` is called.
+- **Problem Prediction**: The `DatabaseManager` will read the `database.path` key from the configuration. Currently, this value is `data/mqi_communicator.db`. As a result, the application will create a directory named `data`, not `database`. This contradicts the new requirement.
+
+### Step 1: Solution
+- **Action**: Modified `config/config.yaml`.
+- **Change**: Updated the `database.path` from `data/mqi_communicator.db` to `database/mqi_communicator.db`.
+- **Outcome**: The application will now create the `database` directory and store the SQLite database inside it, as per the requirement.
+
+### Step 2: Search for Hardcoded Paths
+- **Trace**: After fixing the configuration, the next logical step is to ensure no other part of the application uses a hardcoded path to the old `data` directory. A `grep` search was performed.
+- **Problem Prediction**: The `grep` search revealed hardcoded `"data/"` paths in `.gitignore` and a commented-out line in `backups/backup.bat`. While the test suite in `tests/common/test_db_manager.py` does not use the `data` directory (it correctly uses a temporary database in the root for testing), these other files need to be updated to maintain consistency and prevent future issues.
+
+### Step 2: Solution
+- **Action**: Modified `.gitignore` and `backups/backup.bat`.
+- **Change 1**: In `.gitignore`, changed `data/` to `database/` to ensure the new database directory is ignored by version control.
+- **Change 2**: In `backups/backup.bat`, updated the commented-out example command to use the new `database/` path for consistency.
+- **Outcome**: All hardcoded references to the old `data/` directory have been updated. The application is now consistent.
+
+## 3.3. Final Verification
+- **Verification**: A final review of all changes confirms that the `config.yaml` file has been updated, and all other discovered references to the old `data/` path in `.gitignore` and `backups/backup.bat` have been corrected to `database/`.
+- **Conclusion**: The application is now correctly configured to use the `database` directory for its database storage. The logical flow is sound, and no further issues are predicted related to this change.

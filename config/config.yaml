@@ -2,7 +2,7 @@ logging:
   path: "communicator_local.log"
 
 database:
-  path: "data/mqi_communicator.db"
+  path: "database/mqi_communicator.db"
 
 hpc:
   host: "your_hpc_hostname"
