@@ -109,6 +109,28 @@ def test_update_case_status(db_manager: DatabaseManager):
     assert case["progress"] == 50
 
 
+def test_update_case_pueue_task_id(db_manager: DatabaseManager):
+    """
+    Tests updating the pueue_task_id of an existing case.
+    """
+    case_id = db_manager.add_case("/path/to/pueue_case", "gpu_pueue")
+    assert case_id is not None
+
+    # The pueue_task_id should be NULL initially
+    case = db_manager.get_case_by_id(case_id)
+    assert case is not None
+    assert case["pueue_task_id"] is None
+
+    # Update the pueue_task_id
+    pueue_task_id = 12345
+    db_manager.update_case_pueue_task_id(case_id, pueue_task_id)
+
+    # Retrieve and check
+    case = db_manager.get_case_by_id(case_id)
+    assert case is not None
+    assert case["pueue_task_id"] == pueue_task_id
+
+
 def test_update_case_completion(db_manager: DatabaseManager):
     """
     Tests marking a case as completed or failed.
