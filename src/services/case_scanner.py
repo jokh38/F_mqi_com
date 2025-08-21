@@ -2,7 +2,7 @@ import logging
 import os
 import threading
 from pathlib import Path
-from typing import Dict, Callable
+from typing import Dict, Any, Callable
 
 from watchdog.events import FileSystemEventHandler, FileSystemEvent
 from watchdog.observers import Observer
@@ -10,9 +10,6 @@ from watchdog.observers import Observer
 from src.common.db_manager import DatabaseManager
 
 logger = logging.getLogger(__name__)
-
-# Time in seconds to wait for file activity to cease before processing a directory
-STABILITY_DELAY_SECONDS = 5.0
 
 
 class StableDirectoryEventHandler(FileSystemEventHandler):
@@ -28,7 +25,7 @@ class StableDirectoryEventHandler(FileSystemEventHandler):
         self,
         watch_path: str,
         db_manager: DatabaseManager,
-        stability_delay: float = STABILITY_DELAY_SECONDS,
+        stability_delay: float,
     ):
         self.watch_path = watch_path
         self.db_manager = db_manager
@@ -125,11 +122,20 @@ class StableDirectoryEventHandler(FileSystemEventHandler):
 class CaseScanner:
     """Monitors a directory for new, stable cases."""
 
-    def __init__(self, watch_path: str, db_manager: DatabaseManager) -> None:
+    def __init__(
+        self, watch_path: str, db_manager: DatabaseManager, config: Dict[str, Any]
+    ) -> None:
         self.watch_path = watch_path
         self.db_manager = db_manager
+
+        # Get stability delay from config, with a fallback default.
+        scanner_config = config.get("scanner", {})
+        stability_delay = scanner_config.get("quiescence_period_seconds", 5.0)
+
         self.event_handler = StableDirectoryEventHandler(
-            watch_path=self.watch_path, db_manager=self.db_manager
+            watch_path=self.watch_path,
+            db_manager=self.db_manager,
+            stability_delay=stability_delay,
         )
         # We need to watch recursively to detect file changes inside new directories
         self.observer = Observer()
