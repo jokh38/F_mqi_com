@@ -1,58 +1,32 @@
-# MQI Communicator - Development Progress Report (Cycle 2)
+# Development Progress Report
 
-## Initial State Analysis
+This document tracks the logical tracing of the MQI Communicator application, identifies issues, and details the fixes applied.
 
-This analysis begins with the codebase in a state where the previous fixes have been applied. Specifically:
-- The logic in `main.py` now explicitly handles `'success'`, `'failure'`, and the ambiguous `'not_found'` statuses for remote jobs.
-- The unit tests in `tests/test_main.py` have been repaired and the full test suite passes.
+## Initial Analysis and Planning
 
-The goal of this second analysis cycle is to identify more subtle issues that might arise in less common scenarios, such as prolonged network outages or other error conditions. The logical trace will now explore these edge cases.
-
----
-
-## Problem 3: HPC Resource Leak on Unsuccessful Timeout Kill
-
-### Description
-
-A critical issue was identified when a case times out while the remote HPC is unreachable. The logical flow is as follows:
-
-1.  A `running` case exceeds its `running_case_timeout_hours` limit.
-2.  The application correctly identifies the timeout and attempts to kill the remote job by calling `workflow_submitter.kill_workflow(task_id)`.
-3.  If the HPC is unreachable, the `ssh` command within `kill_workflow` fails, causing the method to return `False`.
-4.  The main loop logs a warning but proceeds to the next steps.
-5.  It calls `db_manager.update_case_completion(case_id, status="failed")`.
-6.  Crucially, it calls `db_manager.release_gpu_resource(case_id)`, which sets the corresponding `gpu_resources` entry status to `'available'`.
-
-This creates a dangerous state inconsistency. The application now believes the GPU resource is free and can assign a new job to it. However, the original job on the HPC was never terminated and may still be running or queued, consuming the actual physical resource.
-
-### Impact
-
-This can lead to a resource leak on the HPC, where jobs that have timed out in the application continue to occupy hardware. It can also cause resource contention, where the application submits a new job to a GPU that it believes is free, but is actually still occupied by the "zombie" job that failed to be killed. This could lead to unpredictable errors or failures on the HPC side.
-
-### Proposed Solution: The 'Zombie' State
-
-To address this, a new state, `'zombie'`, will be introduced for GPU resources. This state indicates that the resource's true status on the HPC is unknown and untrusted.
-
-1.  **Modified Timeout Logic**: When a case times out and the subsequent `kill_workflow` command fails (e.g., due to an unreachable HPC), the application will **not** release the GPU resource. Instead, it will update the resource's status to `'zombie'`. The `assigned_case_id` will be kept for future reference.
-
-2.  **Quarantine**: The `find_and_lock_any_available_gpu` method will continue to only look for resources with the `'available'` status. This effectively quarantines the `'zombie'` resource, preventing it from being assigned to any new cases.
-
-3.  **New Zombie Recovery Loop**: A new section will be added to the main application loop to manage zombie resources. This loop will:
-    - Query the database for all resources with `status = 'zombie'`.
-    - For each zombie resource, find its associated `pueue_task_id` from the linked case.
-    - Periodically attempt to re-run `kill_workflow` for that `pueue_task_id`.
-    - If the kill command eventually succeeds, the application will then, and only then, set the resource's status back to `'available'` and clear its associated case ID.
-
-This design ensures that a resource is not considered free until the application has positive confirmation that the rogue job on the HPC has been terminated, thus preventing the resource leak.
+*   **Codebase Exploration**: Reviewed `main.py`, `db_manager.py`, `case_scanner.py`, `workflow_submitter.py`, `config.yaml`, and `instruction.md`.
+*   **Logical Flow**: Traced the lifecycle of a case from detection to completion.
+*   **Key Findings**: Identified a critical bug in the recovery logic for 'submitting' cases, as well as several code quality and configuration issues.
+*   **Initial Plan**: Developed a multi-step plan focusing on configuration fixes, testing, and bug resolution.
 
 ---
 
-## Final Summary of Cycle 2
+## Problem 1: Flake8 Configuration Conflict
 
-The second analysis cycle successfully identified and resolved a critical resource leak issue.
+*   **Issue**: The `.flake8` configuration file specified `max-line-length = 88` but also included `E501` (line too long) in its ignore list, making the length check ineffective.
+*   **Fix**: Removed `E501` from the `extend-ignore` list to enforce the 88-character line limit.
 
-1.  **Problem Identified**: A scenario was discovered where a case timing out during an HPC outage would lead to the application releasing a GPU resource locally, even though the remote job was never confirmed to be terminated.
-2.  **Solution Implemented**: To fix this, a `'zombie'` state for GPU resources was introduced. This quarantines resources whose remote status is unknown. A recovery loop was added to the main application to periodically attempt to kill the associated remote jobs and, upon success, return the resource to the `'available'` pool.
-3.  **Code Quality**: The implementation was accompanied by corresponding updates to the unit tests. All code quality checks (`black`, `flake8`, `mypy`, `pytest`) now pass.
+## Problem 2: Missing Test Package Initializers
 
-The application is now significantly more resilient to network failures and better protected against HPC resource leaks.
+*   **Issue**: The `tests/common` and `tests/services` directories were missing `__init__.py` files, which can lead to issues with test discovery in some environments.
+*   **Fix**: Added empty `__init__.py` files to both directories to ensure they are treated as proper Python packages.
+
+## Problem 3: Critical Bug in 'Submitting' Case Recovery
+
+*   **Issue**: A logical bug was found in the recovery logic for cases with the status `submitting`. If the application found a matching remote task, it would correctly update the case status to `running`. However, due to an indentation error, it would then immediately proceed to mark the same case as `failed` and release its GPU resource. This would prevent any stuck case from ever being recovered successfully.
+*   **TDD Process**:
+    1.  A new test, `test_main_loop_recovers_stuck_submitting_case_correctly`, was added to `tests/test_main.py`.
+    2.  This test specifically set up the "stuck submitting" scenario and asserted that `update_case_completion` was NOT called.
+    3.  Running `pytest` confirmed the bug, with the new test failing as expected.
+*   **Fix**: The incorrect indentation in `src/main.py` was corrected. The two lines that marked the case as failed were moved inside the `else` block where they were intended to be, ensuring they only execute when a remote task ID cannot be found.
+*   **Verification**: The test suite was run again, and all 41 tests passed, confirming the bug was resolved and no regressions were introduced. This also improved the test coverage of `src/main.py` from 64% to 70%.

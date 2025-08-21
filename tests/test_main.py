@@ -309,3 +309,41 @@ def test_main_loop_handles_submission_id_failure(mock_dependencies):
     # Verify failure handling
     mocks["db"].update_case_completion.assert_called_once_with(6, status="failed")
     mocks["db"].release_gpu_resource.assert_called_once_with(6)
+
+
+def test_main_loop_recovers_stuck_submitting_case_correctly(mock_dependencies):
+    """
+    Tests the recovery logic for a case stuck in 'submitting' state.
+    When a remote task is found, the case should be updated to 'running'
+    and NOT marked as 'failed'.
+    """
+    mocks = mock_dependencies
+    stuck_case = {"case_id": 7, "case_path": "/path/stuck"}
+    remote_task = {"id": 301, "label": "mqic_case_7"}
+
+    # Loop 1: One stuck, no running, no others. Loop 2: Clean exit.
+    mocks["db"].get_cases_by_status.side_effect = [
+        [stuck_case],  # For stuck 'submitting' cases
+        [],  # For running cases timeout check
+        [],  # For running cases status check
+        [],  # For submitted cases
+        SystemExit,
+    ]
+    # Simulate finding the task on the remote HPC
+    mocks["submitter"].find_task_by_label.return_value = ("found", remote_task)
+
+    with pytest.raises(SystemExit):
+        main(mocks["config"])
+
+    # Verify the check was made
+    mocks["submitter"].find_task_by_label.assert_called_once_with("mqic_case_7")
+
+    # Verify the CORRECT recovery action
+    mocks["db"].update_case_pueue_task_id.assert_called_once_with(7, 301)
+    mocks["db"].update_case_status.assert_called_once_with(
+        7, status="running", progress=30
+    )
+
+    # CRITICAL: Verify the BUGGY actions are NOT taken
+    mocks["db"].update_case_completion.assert_not_called()
+    mocks["db"].release_gpu_resource.assert_not_called()

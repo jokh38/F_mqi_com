@@ -144,10 +144,10 @@ def main(config: Dict[str, Any]) -> None:
                                         f"Remote task for case {case_id} has no ID. "
                                         "Cannot recover. Marking as failed."
                                     )
-                                db_manager.update_case_completion(
-                                    case_id, status="failed"
-                                )
-                                db_manager.release_gpu_resource(case_id)
+                                    db_manager.update_case_completion(
+                                        case_id, status="failed"
+                                    )
+                                    db_manager.release_gpu_resource(case_id)
                         elif status == "not_found":
                             # --- Rollback Path ---
                             # No remote job was found. The submission failed before starting.
