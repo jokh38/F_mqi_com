@@ -105,6 +105,39 @@ def test_main_loop_handles_running_case_failure(mock_dependencies):
     mocks["submitter"].get_workflow_status.assert_called_once_with(102)
     mocks["db"].update_case_completion.assert_called_once_with(2, status="failed")
 
+
+def test_main_loop_times_out_case_before_status_check(mock_dependencies):
+    """
+    Tests that a case is timed out based on its own timestamp, even if the
+    HPC was previously unreachable. The timeout check should happen before
+    the remote status check.
+    """
+    mocks = mock_dependencies
+    # Set a very short timeout for this test
+    mocks["config"]["main_loop"]["running_case_timeout_hours"] = 0.01  # 36 seconds
+    from datetime import timedelta
+    # Create a timestamp that is definitely older than the timeout
+    old_timestamp = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    timed_out_case = {"case_id": 3, "pueue_task_id": 103, "status_updated_at": old_timestamp}
+
+    # First loop, check for stuck cases, then check for running cases
+    mocks["db"].get_cases_by_status.side_effect = [
+        [],  # No stuck cases
+        [timed_out_case],  # One running case that should be timed out
+        SystemExit, # Exit after one loop
+    ]
+
+    with pytest.raises(SystemExit):
+        main(mocks["config"])
+
+    # CRITICAL: Verify that we never even tried to check the remote status
+    mocks["submitter"].get_workflow_status.assert_not_called()
+
+    # Verify that the case was marked as failed due to timeout
+    mocks["db"].update_case_completion.assert_called_once_with(3, status="failed")
+    mocks["db"].release_gpu_resource.assert_called_once_with(3)
+
+
 # --- Tests for SUBMITTED cases (rewritten for dynamic allocation) ---
 
 def test_main_loop_submits_case_with_available_gpu(mock_dependencies):

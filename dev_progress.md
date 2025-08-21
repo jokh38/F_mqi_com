@@ -1,36 +1,39 @@
-# Development Progress Report - Cycle 2
+# Development Progress Report - Cycle 3
 
-## Part 1: Logical Code Flow Analysis (Case Detection)
+## Part 1: Logical Code Flow Analysis (Running Case Timeouts)
 
-After resolving the submission race condition, the next logical area to inspect is the initial detection of new cases. The flow is as follows:
+After hardening the submission and case detection logic, the next area for analysis is the management of long-running cases and timeouts. The intended flow is:
 
-1.  **Watch Service**: The `CaseScanner` service uses the `watchdog` library to monitor the `new_cases/` directory for any file system events.
-2.  **Event Trigger**: When a new directory, e.g., `case_xyz`, is created inside `new_cases/`, `watchdog` is intended to fire an event.
-3.  **Immediate DB Insertion**: The event handler is designed to immediately take the path of the new directory and call `db_manager.add_case()`, which inserts it into the database with the status `submitted`.
-4.  **Main Loop Pickup**: The main application loop, which polls the database every few seconds, quickly picks up this new `submitted` case for processing.
+1.  **Get Running Cases**: The main loop queries the database for all cases with the status `running`.
+2.  **Check Remote Status**: For each running case, the application connects to the remote HPC via `ssh` to get the current status of the corresponding `pueue` task.
+3.  **Check for Timeout**: If the remote status is also `running`, the application then checks if the total time elapsed since the case entered the 'running' state has exceeded the configured timeout (e.g., 24 hours).
+4.  **Handle Unreachability**: If the HPC cannot be reached, `get_workflow_status` returns `unreachable`, and the application logs a warning and moves to the next case, effectively skipping the timeout check.
 
-## Part 2: Predicted Problem: The "Incomplete Case" Race Condition
+## Part 2: Predicted Problem: Timeout Clock Paused During HPC Outages
 
-A significant race condition exists in the case detection logic. The `CaseScanner` is too "eager" and acts on incomplete information.
+A subtle but significant flaw exists in the timeout logic. The dependency on a successful HPC connection means the timeout mechanism is not guaranteed to be enforced correctly.
 
 **Problem Trace:**
 
-1.  A user or an automated process begins copying a large case directory (containing multiple files and subdirectories) into the `new_cases/` directory.
-2.  The top-level directory (e.g., `new_cases/case_xyz`) is created on the filesystem almost instantly, while its contents are still being copied.
-3.  The `watchdog` observer in `CaseScanner` detects the creation of this new directory and immediately triggers its event handler.
-4.  The handler adds the `case_xyz` path to the database as a `submitted` case.
-5.  Within seconds, the main loop picks up `case_xyz` for processing and initiates an `scp` transfer to the remote HPC.
-6.  **The `scp` command reads the `case_xyz` directory while files are still being written to it.** This results in an incomplete or corrupted copy of the case being sent to the HPC.
-7.  The remote job inevitably fails due to missing or incomplete files, wasting HPC resources and leading to incorrect failure reports.
+1.  A case, `C1`, starts running at time `T`. Its `status_updated_at` is set to `T`.
+2.  An hour later, the network connection to the HPC is lost. The HPC itself is fine, and job `C1` continues to run, but the orchestrator application cannot reach it.
+3.  For the next 30 hours, on every cycle, the application's call to `get_workflow_status` returns `unreachable`.
+4.  Because the timeout check is inside an `if status == "running":` block, **the timeout logic is never executed** during this 30-hour outage. The timeout clock is effectively "paused".
+5.  At time `T + 31 hours`, the network connection is restored.
+6.  On the next cycle, `get_workflow_status` successfully connects and returns `running`.
+7.  The application now *finally* executes the timeout check: `(T + 31 hours) - T` is greater than the 24-hour limit.
+8.  The case `C1` is immediately marked as `failed` due to a timeout.
 
-## Part 3: Implemented Solution: Configurable Quiescence Period
+This behavior is incorrect. The timeout should represent the maximum allowed wall-clock time for a case, regardless of network conditions. A 24-hour timeout should expire after 24 hours, not 31.
 
-The existing code already contained a basic "quiescence" mechanism to address this, but it used a hardcoded delay value and was not properly integrated with the application's configuration. The solution was to refactor this implementation to make it robust and configurable.
+## Part 3: Implemented Solution: Time-First Timeout Logic
 
-### 1. Made Quiescence Configurable
+To fix this, the logic for handling `running` cases in `src/main.py` was refactored to prioritize the timeout check above all else.
 
-*   **`config/config.yaml`**: A new parameter, `quiescence_period_seconds`, was added under the `scanner` section, with a descriptive comment. This allows administrators to tune the delay based on network speed and typical case size.
-*   **`src/services/case_scanner.py`**: The hardcoded `STABILITY_DELAY_SECONDS` constant was removed. The `CaseScanner` class was modified to accept the application's `config` dictionary in its constructor. It now reads the `quiescence_period_seconds` from the config and passes it to the `StableDirectoryEventHandler`.
-*   **`src/main.py`**: The instantiation of `CaseScanner` was updated to pass the loaded `config` object, properly wiring the new configuration into the scanner service.
+**New Logic:**
 
-This refactoring makes the file-watching logic more robust and adaptable. By waiting for a configurable period of inactivity before processing a new directory, the application can be confident that the directory copy is complete, thus preventing the "incomplete case" problem.
+1.  **Check Timeout First**: For each `running` case, the application now **first** checks if the case has exceeded its time-to-live (`datetime.now(KST) - status_updated_at > timeout_delta`). This check is performed immediately after retrieving the case from the database, without any dependency on the remote HPC's status.
+2.  **Act on Timeout**: If a case has timed out, it is immediately marked as `failed`, its GPU resource is released, and the loop continues to the next case.
+3.  **Check Remote Status**: Only if a case has *not* timed out does the application proceed to check its status on the remote HPC.
+
+This new "time-first" approach ensures that the timeout is a strict and reliable limit. It correctly handles prolonged HPC connectivity issues, preventing cases from running indefinitely and ensuring that the system's state reflects the intended operational constraints.

@@ -176,13 +176,29 @@ def main(config: Dict[str, Any]) -> None:
                             db_manager.release_gpu_resource(case_id)
                             continue
 
-                        # Check the remote status of the job
+                        # First, check for a timeout. This is independent of HPC reachability.
+                        if datetime.now(KST) - status_updated_at > timeout_delta:
+                            logging.critical(
+                                f"Case ID {case_id} has been in 'running' state for more than "
+                                f"{running_case_timeout_hours} hours. Marking as failed due to timeout."
+                            )
+                            db_manager.update_case_completion(
+                                case_id, status="failed"
+                            )
+                            db_manager.release_gpu_resource(case_id)
+                            # Consider attempting to kill the remote job here in the future.
+                            logging.info(
+                                f"Released GPU resource for timed-out case ID: {case_id}."
+                            )
+                            continue
+
+                        # If not timed out, check the remote status of the job.
                         status = workflow_submitter.get_workflow_status(task_id)
                         logging.info(
                             f"Case ID {case_id} (Task {task_id}) has remote status: '{status}'."
                         )
 
-                        # Handle terminal states first (success, failure, or not found on remote)
+                        # Handle terminal states (success, failure, or not found on remote)
                         if status in ("success", "failure", "not_found"):
                             final_status = "completed" if status == "success" else "failed"
                             db_manager.update_case_completion(
@@ -197,31 +213,16 @@ def main(config: Dict[str, Any]) -> None:
                                 logging.error(
                                     f"Case ID {case_id} failed (status: {status}). GPU resource released."
                                 )
-                            continue  # Move to the next case
 
-                        # If the HPC is unreachable, we can't make decisions. Log and retry next cycle.
-                        if status == "unreachable":
+                        # If the HPC is unreachable or the job is still running, do nothing.
+                        # The timeout logic above will eventually catch any truly stuck cases.
+                        elif status == "unreachable":
                             logging.warning(
                                 f"HPC is unreachable. Cannot determine status for case {case_id}. Will retry."
                             )
-                            continue  # Move to the next case
-
-                        # If the status is 'running', we can then check for a timeout.
-                        # This prevents incorrectly failing a job during a network outage.
-                        if status == "running":
-                            if datetime.now(KST) - status_updated_at > timeout_delta:
-                                logging.critical(
-                                    f"Case ID {case_id} has been in 'running' state for more than "
-                                    f"{running_case_timeout_hours} hours. Marking as failed due to timeout."
-                                )
-                                db_manager.update_case_completion(
-                                    case_id, status="failed"
-                                )
-                                db_manager.release_gpu_resource(case_id)
-                                logging.info(
-                                    f"Released GPU resource for timed-out case ID: {case_id}."
-                                )
-                            # If it's running and not timed out, we do nothing and wait for the next cycle.
+                        elif status == "running":
+                            # It's running and not timed out, so we just wait for the next cycle.
+                            pass
 
                 # --- Part 2: Process new SUBMITTED cases with dynamic resource allocation ---
                 submitted_cases = db_manager.get_cases_by_status("submitted")
