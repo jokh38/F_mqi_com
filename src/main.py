@@ -102,23 +102,57 @@ def main(config: Dict[str, Any]) -> None:
         logging.info("Starting main application loop...")
         while True:
             try:
-                # --- Part 0: Handle potentially stuck cases ---
+                # --- Part 0: Recover cases stuck in 'submitting' state ---
                 stuck_submitting_cases = db_manager.get_cases_by_status("submitting")
                 if stuck_submitting_cases:
                     logging.warning(
-                        f"Found {len(stuck_submitting_cases)} case(s) stuck in 'submitting' state. Resetting..."
+                        f"Found {len(stuck_submitting_cases)} case(s) potentially stuck in 'submitting' state. Attempting recovery..."
                     )
                     for case in stuck_submitting_cases:
                         case_id = case["case_id"]
-                        logging.warning(
-                            f"Case ID {case_id} is stuck in 'submitting' state. "
-                            "This is an unrecoverable state. Marking as 'failed'."
-                        )
-                        db_manager.update_case_completion(case_id, status="failed")
-                        db_manager.release_gpu_resource(case_id)
+                        label = f"mqic_case_{case_id}"
                         logging.info(
-                            f"Released GPU resource for a stuck case ID: {case_id}."
+                            f"Checking for remote task with label '{label}' for case {case_id}."
                         )
+
+                        # Check if a task with the corresponding label exists on the HPC
+                        remote_task = workflow_submitter.find_task_by_label(label)
+
+                        if remote_task:
+                            # --- Recovery Path ---
+                            # The job exists remotely, but our DB wasn't updated. Let's fix it.
+                            task_id = remote_task.get("id")
+                            if task_id is not None:
+                                logging.warning(
+                                    f"Found orphaned remote task {task_id} for case {case_id}. "
+                                    "Recovering state to 'running'."
+                                )
+                                db_manager.update_case_pueue_task_id(case_id, task_id)
+                                db_manager.update_case_status(
+                                    case_id, status="running", progress=30
+                                )
+                            else:
+                                # This case is unlikely but possible if Pueue's output changes.
+                                logging.error(
+                                    f"Found remote task for case {case_id} but it has no ID. Cannot recover. Marking as failed."
+                                )
+                                db_manager.update_case_completion(
+                                    case_id, status="failed"
+                                )
+                                db_manager.release_gpu_resource(case_id)
+                        else:
+                            # --- Rollback Path ---
+                            # No remote job was found. The submission failed before starting.
+                            # It's safe to mark as failed and release the resource.
+                            logging.warning(
+                                f"No remote task found for case {case_id}. "
+                                "The submission likely failed. Marking as 'failed'."
+                            )
+                            db_manager.update_case_completion(case_id, status="failed")
+                            db_manager.release_gpu_resource(case_id)
+                            logging.info(
+                                f"Released GPU resource for failed submission of case ID: {case_id}."
+                            )
 
                 # --- Part 1: Manage all RUNNING cases (replaces old Part 0.5 and 1) ---
                 running_cases = db_manager.get_cases_by_status("running")
@@ -221,7 +255,9 @@ def main(config: Dict[str, Any]) -> None:
                                 )
 
                                 pueue_task_id = workflow_submitter.submit_workflow(
-                                    case_path=case_path, pueue_group=locked_pueue_group
+                                    case_id=case_id,
+                                    case_path=case_path,
+                                    pueue_group=locked_pueue_group,
                                 )
 
                                 if pueue_task_id is not None:
