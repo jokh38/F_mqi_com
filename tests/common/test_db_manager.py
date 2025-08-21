@@ -228,3 +228,36 @@ def test_get_cases_by_status(db_manager: DatabaseManager):
     running = db_manager.get_cases_by_status("running")
     assert len(running) == 1
     assert running[0]["case_id"] == id3
+
+
+def test_update_case_completion_clears_resource_fields(db_manager: DatabaseManager):
+    """
+    Tests that update_case_completion correctly marks a case as complete
+    AND clears the pueue_group and pueue_task_id fields.
+    """
+    # 1. Setup a case as if it were running
+    case_id = db_manager.add_case("/path/to/completed_case")
+    assert case_id is not None
+    db_manager.update_case_pueue_group(case_id, "gpu_a")
+    db_manager.update_case_pueue_task_id(case_id, 12345)
+    db_manager.update_case_status(case_id, "running", 50)
+
+    # Verify it's in a running-like state
+    case = db_manager.get_case_by_id(case_id)
+    assert case is not None
+    assert case["pueue_group"] == "gpu_a"
+    assert case["pueue_task_id"] == 12345
+    assert case["status"] == "running"
+
+    # 2. Action: Mark the case as completed
+    db_manager.update_case_completion(case_id, "completed")
+
+    # 3. Verification
+    completed_case = db_manager.get_case_by_id(case_id)
+    assert completed_case is not None
+    assert completed_case["status"] == "completed"
+    assert completed_case["progress"] == 100
+    assert completed_case["completed_at"] is not None
+    # Verify that resource association is cleared
+    assert completed_case["pueue_group"] is None
+    assert completed_case["pueue_task_id"] is None

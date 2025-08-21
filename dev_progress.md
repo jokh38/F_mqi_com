@@ -37,3 +37,14 @@ The application, MQI Communicator, is designed to automate the process of runnin
 
 *   **Solution Implemented**:
     *   In `src/services/workflow_submitter.py`, the `except (json.JSONDecodeError, KeyError)` block within the `get_workflow_status` function was modified. It now returns the string `'unreachable'` instead of `'failure'`. The corresponding error log message was also updated to reflect that the action is to retry rather than to mark as a failure. This makes the system more resilient to transient data corruption or future non-breaking changes in the remote API.
+
+## Problem 3: Stale Data in `cases` Table on Completion
+
+*   **File**: `src/common/db_manager.py`
+*   **Problem Description**: When a case finishes (either `completed` or `failed`), the associated GPU resource is correctly released. However, the entry for the case in the `cases` table is left with stale data in the `pueue_group` and `pueue_task_id` columns. A case that is in a terminal state should not be associated with a resource it is no longer using. This represents a minor data integrity issue that could lead to confusion during debugging or if the application logic were extended.
+*   **Proposed Solution**: To ensure data is properly cleaned up, the `update_case_completion` function in `db_manager.py` will be modified. When it updates a case's status to `completed` or `failed`, it will also set the `pueue_group` and `pueue_task_id` fields to `NULL`. This ensures that terminal cases have no lingering resource associations, improving data consistency.
+
+*   **Solution Implemented**:
+    *   The `update_case_completion` function in `src/common/db_manager.py` was updated. The `UPDATE` query within this function now also sets `pueue_group = NULL` and `pueue_task_id = NULL`.
+    *   A new test, `test_update_case_completion_clears_resource_fields`, was added to `tests/common/test_db_manager.py` to verify this new behavior.
+    *   All 36 tests pass, confirming the change is correct and introduces no regressions.
