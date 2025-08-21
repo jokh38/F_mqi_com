@@ -22,4 +22,9 @@ main_loop:
   sleep_interval_seconds: 10 # Time to wait between polling for new cases
 
 pueue:
-  default_group: "default" # Default pueue group for new tasks
+  # List of all pueue groups that the application can manage.
+  # The first group in the list is used as the default for new cases.
+  groups:
+    - "default"
+    - "gpu_a"
+    - "gpu_b"

@@ -2,8 +2,11 @@ import subprocess
 import shlex
 import re
 import json
+import logging
 from pathlib import Path
 from typing import Dict, Any, Optional, Literal
+
+logger = logging.getLogger(__name__)
 
 
 class WorkflowSubmissionError(Exception):
@@ -76,16 +79,20 @@ class WorkflowSubmitter:
             f"{self.user}@{self.host}:{self.hpc_config['remote_base_dir']}",
         ]
         try:
+            logger.info(f"Transferring case '{safe_case_name}' to HPC...")
             subprocess.run(
                 scp_command, check=True, capture_output=True, text=True, timeout=300
             )
+            logger.info(f"Case '{safe_case_name}' transferred successfully.")
         except subprocess.CalledProcessError as e:
             error_message = (
                 f"Failed to copy case '{safe_case_name}' to HPC. SCP stderr: {e.stderr}"
             )
+            logger.error(error_message)
             raise WorkflowSubmissionError(error_message) from e
         except subprocess.TimeoutExpired as e:
             error_message = f"Timeout during scp of case '{safe_case_name}'."
+            logger.error(error_message)
             raise WorkflowSubmissionError(error_message) from e
 
         # 2. Submit job to Pueue via ssh
@@ -106,20 +113,24 @@ class WorkflowSubmitter:
             remote_command,
         ]
         try:
+            logger.info(f"Submitting job for case '{safe_case_name}' to Pueue...")
             result = subprocess.run(
                 ssh_command, check=True, capture_output=True, text=True, timeout=60
             )
+            logger.info(f"Job for case '{safe_case_name}' submitted successfully.")
             return self._parse_pueue_add_output(result.stdout)
         except subprocess.CalledProcessError as e:
             error_message = (
                 f"Failed to submit job for case '{safe_case_name}' to Pueue. "
                 f"SSH stderr: {e.stderr}"
             )
+            logger.error(error_message)
             raise WorkflowSubmissionError(error_message) from e
         except subprocess.TimeoutExpired as e:
             error_message = (
                 f"Timeout during ssh submission for case '{safe_case_name}'."
             )
+            logger.error(error_message)
             raise WorkflowSubmissionError(error_message) from e
 
     def get_workflow_status(
@@ -150,6 +161,7 @@ class WorkflowSubmitter:
             tasks = status_data.get("tasks", {})
 
             if str(task_id) not in tasks:
+                logger.warning(f"Task ID {task_id} not found in Pueue response.")
                 return "not_found"
 
             task_info = tasks[str(task_id)]
@@ -160,17 +172,26 @@ class WorkflowSubmitter:
             elif status in ["Failed", "Killing"]:
                 return "failure"
             else:
-                return "running"  # Includes 'Running', 'Queued', 'Paused', etc.
+                # Includes 'Running', 'Queued', 'Paused', etc.
+                return "running"
 
-        except (subprocess.CalledProcessError, json.JSONDecodeError, KeyError) as e:
-            # If the command fails or parsing fails, we cannot determine the status.
-            # This could be a transient network issue, so we treat it as 'running'
-            # to allow for retries, but log the issue.
-            # A more robust solution might have a separate 'unknown' state.
-            # For now, this prevents a job from being marked 'failed' prematurely.
-            # A proper logger should be injected here, but for now, print.
-            print(f"Warning: Could not determine status for task {task_id}: {e}")
-            return "running"
         except subprocess.TimeoutExpired:
-            print(f"Warning: Timeout while checking status for task {task_id}")
+            logger.warning(
+                f"Timeout while checking status for task {task_id}. "
+                "Treating as 'running' to allow for retry."
+            )
             return "running"
+        except subprocess.CalledProcessError as e:
+            logger.warning(
+                f"SSH command failed for task {task_id}. Stderr: {e.stderr}. "
+                "Treating as 'running' to allow for retry."
+            )
+            return "running"
+        except (json.JSONDecodeError, KeyError) as e:
+            logger.error(
+                f"Failed to parse Pueue status for task {task_id}. "
+                f"This may be an unrecoverable error. Error: {e}. "
+                "Marking as 'failure'.",
+                exc_info=True,
+            )
+            return "failure"

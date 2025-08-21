@@ -167,6 +167,17 @@ class DatabaseManager:
         )
         self.conn.commit()
 
+    def ensure_gpu_resource_exists(self, pueue_group: str) -> None:
+        """
+        Ensures a GPU resource for the given group exists in the database.
+        If it doesn't exist, it's created with 'available' status.
+        """
+        self.cursor.execute(
+            "SELECT 1 FROM gpu_resources WHERE pueue_group = ?", (pueue_group,)
+        )
+        if self.cursor.fetchone() is None:
+            self.add_gpu_resource(pueue_group, status="available")
+
     def get_gpu_resource(self, pueue_group: str) -> Optional[Dict[str, Any]]:
         """Retrieves a GPU resource by its group name."""
         self.cursor.execute(
@@ -186,6 +197,53 @@ class DatabaseManager:
             WHERE pueue_group = ?
         """,
             (status, case_id, pueue_group),
+        )
+        self.conn.commit()
+
+    def find_and_lock_available_gpu(self, pueue_group: str, case_id: int) -> bool:
+        """
+        Atomically finds an available GPU resource for a specific group and locks it.
+
+        Args:
+            pueue_group: The pueue group to check for an available resource.
+            case_id: The ID of the case to assign to the resource.
+
+        Returns:
+            True if a resource was successfully locked, False otherwise.
+        """
+        with self.conn:  # Ensures the block is executed in a transaction
+            self.cursor.execute(
+                """
+                SELECT pueue_group FROM gpu_resources
+                WHERE pueue_group = ? AND status = 'available'
+                """,
+                (pueue_group,),
+            )
+            resource = self.cursor.fetchone()
+
+            if resource:
+                self.cursor.execute(
+                    """
+                    UPDATE gpu_resources
+                    SET status = 'assigned', assigned_case_id = ?
+                    WHERE pueue_group = ?
+                    """,
+                    (case_id, pueue_group),
+                )
+                return True
+        return False
+
+    def release_gpu_resource(self, case_id: int) -> None:
+        """
+        Releases a GPU resource that was assigned to a specific case.
+        """
+        self.cursor.execute(
+            """
+            UPDATE gpu_resources
+            SET status = 'available', assigned_case_id = NULL
+            WHERE assigned_case_id = ?
+            """,
+            (case_id,),
         )
         self.conn.commit()
 

@@ -67,12 +67,26 @@ def main() -> None:
         logging.info("MQI Communicator application starting...")
         logging.info("Configuration loaded successfully.")
 
-        # 3. Initialize Components
+        # 3. Initialize Components & DB
         db_manager = DatabaseManager(config=config)
         db_manager.init_db()
         logging.info("DatabaseManager initialized.")
 
-        pueue_group = config.get("pueue", {}).get("default_group", "default")
+        # 4. Initialize GPU Resources from Config
+        pueue_config = config.get("pueue", {})
+        pueue_groups = pueue_config.get("groups", [])
+        if not pueue_groups:
+            raise ValueError("Configuration error: 'pueue.groups' must be a non-empty list.")
+
+        for group in pueue_groups:
+            db_manager.ensure_gpu_resource_exists(group)
+            logging.info(f"Ensured GPU resource for group '{group}' exists.")
+
+        # Use the first group in the list as the default for new cases
+        default_pueue_group = pueue_groups[0]
+        logging.info(f"Default Pueue group for new cases is set to '{default_pueue_group}'.")
+
+        # 5. Continue Component Initialization
         watch_path = config.get("scanner", {}).get("watch_path", "new_cases")
         sleep_interval = config.get("main_loop", {}).get("sleep_interval_seconds", 10)
 
@@ -80,7 +94,7 @@ def main() -> None:
         logging.info("WorkflowSubmitter initialized.")
 
         case_scanner = CaseScanner(
-            watch_path=watch_path, db_manager=db_manager, pueue_group=pueue_group
+            watch_path=watch_path, db_manager=db_manager, pueue_group=default_pueue_group
         )
         logging.info("CaseScanner initialized.")
 
@@ -105,66 +119,79 @@ def main() -> None:
                             f"Case ID {case_id} is 'running' but has no pueue_task_id. Marking as failed."
                         )
                         db_manager.update_case_completion(case_id, status="failed")
+                        db_manager.release_gpu_resource(case_id)
+                        logging.info(f"Released GPU resource for failed case ID: {case_id}.")
                         continue
 
                     status = workflow_submitter.get_workflow_status(task_id)
                     logging.info(f"Case ID {case_id} (Task {task_id}) has remote status: '{status}'.")
 
-                    if status == "success":
-                        db_manager.update_case_completion(case_id, status="completed")
-                        logging.info(f"Case ID {case_id} successfully completed.")
-                    elif status == "failure":
-                        db_manager.update_case_completion(case_id, status="failed")
-                        logging.error(f"Case ID {case_id} failed in remote execution.")
-                    elif status == "not_found":
-                        logging.error(
-                            f"Case ID {case_id} (Task {task_id}) not found in Pueue. Marking as failed."
-                        )
-                        db_manager.update_case_completion(case_id, status="failed")
+                    if status in ("success", "failure", "not_found"):
+                        final_status = "completed" if status == "success" else "failed"
+                        db_manager.update_case_completion(case_id, status=final_status)
+                        db_manager.release_gpu_resource(case_id)
+                        if final_status == "completed":
+                            logging.info(f"Case ID {case_id} successfully completed. GPU resource released.")
+                        else:
+                            logging.error(
+                                f"Case ID {case_id} failed (status: {status}). GPU resource released."
+                            )
                     # If status is 'running', do nothing and check again next cycle.
 
                 # --- Part 2: Process new SUBMITTED cases ---
                 submitted_cases = db_manager.get_cases_by_status("submitted")
                 if submitted_cases:
+                    # Check for available resources before iterating through all cases
                     logging.info(f"Found {len(submitted_cases)} submitted case(s) to process.")
-                for case in submitted_cases:
-                    case_id = case["case_id"]
-                    case_path = case["case_path"]
-                    logging.info(
-                        f"Processing submitted case ID: {case_id}, Path: {case_path}"
-                    )
+                    for case in submitted_cases:
+                        case_id = case["case_id"]
+                        case_path = case["case_path"]
+                        pueue_group = case["pueue_group"]
 
-                    try:
-                        # Mark as 'submitting' to prevent re-processing
-                        db_manager.update_case_status(
-                            case_id, status="submitting", progress=10
+                        # Try to lock a GPU resource for this case's group
+                        if not db_manager.find_and_lock_available_gpu(pueue_group, case_id):
+                            logging.info(f"No available GPU for group '{pueue_group}'. Will retry case {case_id} later.")
+                            continue  # Skip to the next case
+
+                        logging.info(
+                            f"GPU resource locked for group '{pueue_group}'. Processing case ID: {case_id}"
                         )
 
-                        pueue_task_id = workflow_submitter.submit_workflow(
-                            case_path=case_path, pueue_group=case["pueue_group"]
-                        )
-
-                        if pueue_task_id is not None:
-                            db_manager.update_case_pueue_task_id(case_id, pueue_task_id)
+                        try:
+                            # Mark as 'submitting' to prevent re-processing
                             db_manager.update_case_status(
-                                case_id, status="running", progress=30
+                                case_id, status="submitting", progress=10
                             )
-                            logging.info(
-                                f"Case ID: {case_id} successfully submitted to workflow as Task ID: {pueue_task_id}."
+
+                            pueue_task_id = workflow_submitter.submit_workflow(
+                                case_path=case_path, pueue_group=pueue_group
                             )
-                        else:
-                            # Handle case where submission succeeded but ID parsing failed
+
+                            if pueue_task_id is not None:
+                                db_manager.update_case_pueue_task_id(case_id, pueue_task_id)
+                                db_manager.update_case_status(
+                                    case_id, status="running", progress=30
+                                )
+                                logging.info(
+                                    f"Case ID: {case_id} successfully submitted to workflow as Task ID: {pueue_task_id}."
+                                )
+                            else:
+                                # Handle case where submission succeeded but ID parsing failed
+                                logging.error(
+                                    f"Failed to get Pueue Task ID for case ID: {case_id}."
+                                )
+                                db_manager.update_case_completion(case_id, status="failed")
+                                db_manager.release_gpu_resource(case_id) # Release lock on failure
+                                logging.info(f"Released GPU resource for failed case ID: {case_id}.")
+
+                        except Exception as e:
                             logging.error(
-                                f"Failed to get Pueue Task ID for case ID: {case_id}."
+                                f"Failed to process case ID: {case_id}. Error: {e}",
+                                exc_info=True,
                             )
                             db_manager.update_case_completion(case_id, status="failed")
-
-                    except Exception as e:
-                        logging.error(
-                            f"Failed to process case ID: {case_id}. Error: {e}",
-                            exc_info=True,
-                        )
-                        db_manager.update_case_completion(case_id, status="failed")
+                            db_manager.release_gpu_resource(case_id) # Release lock on failure
+                            logging.info(f"Released GPU resource for failed case ID: {case_id}.")
 
             except Exception as e:
                 # Catch exceptions in the main loop itself to prevent crashing
