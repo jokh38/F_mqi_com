@@ -49,7 +49,7 @@ def setup_logging(config: Dict[str, Any]) -> None:
     logging.info(f"Logger has been configured. Logging to: {log_path}")
 
 
-def main() -> None:
+def main(config: Dict[str, Any]) -> None:
     """
     Main function for the MQI Communicator application.
     This function initializes all components and runs the main loop.
@@ -58,16 +58,9 @@ def main() -> None:
     db_manager = None
 
     try:
-        # 1. Load Configuration
-        with open(CONFIG_PATH, "r") as f:
-            config = yaml.safe_load(f)
-
-        # 2. Setup Logging (as early as possible)
-        setup_logging(config)
         logging.info("MQI Communicator application starting...")
-        logging.info("Configuration loaded successfully.")
 
-        # 3. Initialize Components & DB
+        # 1. Initialize Components & DB
         db_manager = DatabaseManager(config=config)
         db_manager.init_db()
         logging.info("DatabaseManager initialized.")
@@ -250,4 +243,4 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"ERROR: Failed to configure logging from config.yaml: {e}")
 
-    main()
+    main(initial_config)
