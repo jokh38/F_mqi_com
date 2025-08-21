@@ -214,8 +214,8 @@ class DatabaseManager:
 
     def find_and_lock_any_available_gpu(self, case_id: int) -> Optional[str]:
         """
-        Atomically finds any available GPU resource across all groups and locks it.
-        This is a critical transactional operation to prevent race conditions.
+        Atomically finds and locks an available GPU to prevent race conditions.
+        It uses a single UPDATE query to find and claim a resource in one step.
 
         Args:
             case_id: The ID of the case to assign to the resource.
@@ -224,30 +224,34 @@ class DatabaseManager:
             The `pueue_group` name if a resource was successfully locked, None otherwise.
         """
         with self.conn:  # Ensures the block is executed in a transaction
-            # Find the first available resource
+            # This atomic UPDATE finds an available resource, claims it,
+            # and prevents other processes from picking the same one.
             self.cursor.execute(
                 """
-                SELECT pueue_group FROM gpu_resources
-                WHERE status = 'available'
-                LIMIT 1
-                """
+                UPDATE gpu_resources
+                SET status = 'assigned', assigned_case_id = ?
+                WHERE rowid = (
+                    SELECT rowid FROM gpu_resources
+                    WHERE status = 'available'
+                    ORDER BY pueue_group -- Ensures deterministic selection for testing
+                    LIMIT 1
+                )
+                """,
+                (case_id,),
             )
-            resource = self.cursor.fetchone()
 
-            if resource:
-                pueue_group = resource["pueue_group"]
-                # Lock the found resource
+            # If the update succeeded (a row was changed), find out which group we locked.
+            if self.cursor.rowcount > 0:
                 self.cursor.execute(
                     """
-                    UPDATE gpu_resources
-                    SET status = 'assigned', assigned_case_id = ?
-                    WHERE pueue_group = ? AND status = 'available'
+                    SELECT pueue_group FROM gpu_resources
+                    WHERE assigned_case_id = ?
                     """,
-                    (case_id, pueue_group),
+                    (case_id,),
                 )
-                # Check if the update was successful (i.e., the row was not locked by another process)
-                if self.cursor.rowcount > 0:
-                    return pueue_group
+                resource = self.cursor.fetchone()
+                if resource:
+                    return resource["pueue_group"]
         return None
 
     def release_gpu_resource(self, case_id: int) -> None:

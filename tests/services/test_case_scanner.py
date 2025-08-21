@@ -29,10 +29,13 @@ def mock_db_manager() -> Mock:
 
 
 @pytest.fixture
-def stable_event_handler(mock_db_manager: Mock) -> StableDirectoryEventHandler:
-    """Provides an instance of StableDirectoryEventHandler."""
+def stable_event_handler(
+    mock_db_manager: Mock, temp_watch_dir: Path
+) -> StableDirectoryEventHandler:
+    """Provides an instance of StableDirectoryEventHandler, using the temp_watch_dir fixture."""
     # No teardown needed as we will mock the Timer class itself
     return StableDirectoryEventHandler(
+        watch_path=str(temp_watch_dir),
         db_manager=mock_db_manager,
         stability_delay=TEST_STABILITY_DELAY,
     )
@@ -75,9 +78,9 @@ def test_handler_calls_add_case_when_timer_expires(
     stable_event_handler.on_any_event(event)
 
     # Extract the callback and its arguments from the mock Timer
-    timer_args = MockTimer.call_args.args
-    callback_func = timer_args[1]
-    callback_args = timer_args[2]
+    timer_call = MockTimer.call_args
+    callback_func = timer_call.args[1]
+    callback_args = timer_call.kwargs['args']
 
     # Simulate the timer expiring by executing the callback
     callback_func(*callback_args)
@@ -114,9 +117,9 @@ def test_handler_resets_timer_on_internal_modification(
     assert MockTimer.call_count == 2
 
     # Extract the callback from the second timer call
-    timer_args = MockTimer.call_args.args
-    callback_func = timer_args[1]
-    callback_args = timer_args[2]
+    timer_call = MockTimer.call_args
+    callback_func = timer_call.args[1]
+    callback_args = timer_call.kwargs['args']
 
     # Simulate the second timer expiring
     callback_func(*callback_args)
