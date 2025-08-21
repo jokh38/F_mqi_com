@@ -127,12 +127,19 @@ class TestGetWorkflowStatus:
             status = submitter.get_workflow_status(105)
             assert status == "not_found"
 
-    def test_get_status_ssh_failure_is_running(self, submitter):
-        """Test status is 'running' (safest default) if the ssh command fails."""
+    def test_get_status_ssh_failure_is_unreachable(self, submitter):
+        """Test status is 'unreachable' if the ssh command fails."""
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = subprocess.CalledProcessError(1, "ssh")
             status = submitter.get_workflow_status(106)
-            assert status == "running"
+            assert status == "unreachable"
+
+    def test_get_status_timeout_is_unreachable(self, submitter):
+        """Test status is 'unreachable' if the ssh command times out."""
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = subprocess.TimeoutExpired("ssh", timeout=60)
+            status = submitter.get_workflow_status(107)
+            assert status == "unreachable"
 
     def test_get_status_json_error_is_failure(self, submitter):
         """Test status is 'failure' if the output is not valid JSON."""

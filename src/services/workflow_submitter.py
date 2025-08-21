@@ -135,7 +135,7 @@ class WorkflowSubmitter:
 
     def get_workflow_status(
         self, task_id: int
-    ) -> Literal["success", "failure", "running", "not_found"]:
+    ) -> Literal["success", "failure", "running", "not_found", "unreachable"]:
         """
         Checks the status of a specific workflow task in Pueue.
 
@@ -143,8 +143,12 @@ class WorkflowSubmitter:
             task_id: The ID of the task to check.
 
         Returns:
-            A string representing the task status: 'success', 'failure',
-            'running', or 'not_found'.
+            A string representing the task status:
+            - 'success': The task finished successfully.
+            - 'failure': The task failed or was killed.
+            - 'running': The task is running or queued.
+            - 'not_found': The task does not exist in Pueue.
+            - 'unreachable': The Pueue daemon was unreachable (e.g., SSH error).
         """
         ssh_command = [
             self.ssh_cmd,
@@ -168,30 +172,25 @@ class WorkflowSubmitter:
             status = task_info.get("status")
 
             if status == "Done":
-                # For a 'Done' task, we must check the 'result' to be sure.
                 if task_info.get("result") == "success":
                     return "success"
                 else:
-                    # Any other result ('failure', or a numeric exit code) is a failure.
                     return "failure"
             elif status in ["Failed", "Killing"]:
                 return "failure"
-            else:
-                # Includes 'Running', 'Queued', 'Paused', etc.
+            else:  # 'Running', 'Queued', 'Paused', etc.
                 return "running"
 
         except subprocess.TimeoutExpired:
             logger.warning(
-                f"Timeout while checking status for task {task_id}. "
-                "Treating as 'running' to allow for retry."
+                f"Timeout while checking status for task {task_id}. HPC is unreachable."
             )
-            return "running"
+            return "unreachable"
         except subprocess.CalledProcessError as e:
             logger.warning(
-                f"SSH command failed for task {task_id}. Stderr: {e.stderr}. "
-                "Treating as 'running' to allow for retry."
+                f"SSH command failed for task {task_id}. Stderr: {e.stderr}. HPC is unreachable."
             )
-            return "running"
+            return "unreachable"
         except (json.JSONDecodeError, KeyError) as e:
             logger.error(
                 f"Failed to parse Pueue status for task {task_id}. "
