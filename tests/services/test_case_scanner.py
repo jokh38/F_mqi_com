@@ -152,3 +152,47 @@ def test_case_scanner_integration(MockObserver, mock_db_manager: Mock, temp_watc
     mock_observer_instance.start.assert_called_once()
     mock_observer_instance.stop.assert_called_once()
     mock_observer_instance.join.assert_called_once()
+
+
+@patch("src.services.case_scanner.threading.Timer")
+def test_handler_retries_on_db_failure_and_succeeds(
+    MockTimer,
+    stable_event_handler: StableDirectoryEventHandler,
+    mock_db_manager: Mock,
+    temp_watch_dir: Path,
+):
+    """
+    Tests that the handler retries processing if the DB call fails, and succeeds on the second attempt.
+    """
+    # Arrange: Setup a case path and an event
+    new_dir_path = str(temp_watch_dir / "new_case_for_retry")
+    event = DirCreatedEvent(new_dir_path)
+
+    # Arrange: Mock the DB to fail on the first call, then succeed
+    mock_db_manager.add_case.side_effect = [Exception("Database locked"), None]
+
+    # Act 1: An event occurs, a timer is set
+    stable_event_handler.on_any_event(event)
+
+    # Simulate the first timer expiring
+    first_timer_call = MockTimer.call_args
+    callback_func = first_timer_call.args[1]
+    callback_args = first_timer_call.kwargs["args"]
+    with patch("os.path.isdir", return_value=True):
+        callback_func(*callback_args)
+
+    # Assert 1: A retry timer was scheduled
+    # The first call was from on_any_event, the second from _handle_processing_failure
+    assert MockTimer.call_count == 2
+    mock_db_manager.add_case.assert_called_once_with(new_dir_path)
+
+    # Act 2: Simulate the *second* (retry) timer expiring
+    second_timer_call = MockTimer.call_args
+    callback_func = second_timer_call.args[1]
+    callback_args = second_timer_call.kwargs["args"]
+    with patch("os.path.isdir", return_value=True):
+        callback_func(*callback_args)
+
+    # Assert 2: The DB was called a second time, and no new timers were set
+    assert mock_db_manager.add_case.call_count == 2
+    assert MockTimer.call_count == 2  # No new timers should be created on success
