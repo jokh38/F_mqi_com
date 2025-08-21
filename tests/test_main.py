@@ -1,6 +1,7 @@
 import pytest
 from unittest.mock import patch, MagicMock, call
 import logging
+from datetime import datetime, timezone
 
 from src.main import main
 
@@ -64,10 +65,15 @@ def mock_dependencies(mock_config):
 def test_main_loop_handles_running_case_success(mock_dependencies):
     """Tests a 'running' case that completes successfully."""
     mocks = mock_dependencies
-    running_case = {"case_id": 1, "pueue_task_id": 101}
+    now = datetime.now(timezone.utc).isoformat()
+    running_case = {"case_id": 1, "pueue_task_id": 101, "status_updated_at": now}
     # Loop 1: No stuck, one running, no submitted. Loop 2: Clean exit.
     mocks["db"].get_cases_by_status.side_effect = [
-        [], [running_case], [], SystemExit
+        [],  # For stuck cases
+        [running_case],  # For running cases timeout check
+        [running_case],  # For running cases status check
+        [],  # For submitted cases
+        SystemExit,
     ]
     mocks["submitter"].get_workflow_status.return_value = "success"
 
@@ -81,10 +87,15 @@ def test_main_loop_handles_running_case_success(mock_dependencies):
 def test_main_loop_handles_running_case_failure(mock_dependencies):
     """Tests a 'running' case that fails."""
     mocks = mock_dependencies
-    running_case = {"case_id": 2, "pueue_task_id": 102}
+    now = datetime.now(timezone.utc).isoformat()
+    running_case = {"case_id": 2, "pueue_task_id": 102, "status_updated_at": now}
     # Loop 1: No stuck, one running, no submitted. Loop 2: Clean exit.
     mocks["db"].get_cases_by_status.side_effect = [
-        [], [running_case], [], SystemExit
+        [],  # For stuck cases
+        [running_case],  # For running cases timeout check
+        [running_case],  # For running cases status check
+        [],  # For submitted cases
+        SystemExit,
     ]
     mocks["submitter"].get_workflow_status.return_value = "failure"
 
