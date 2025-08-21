@@ -141,7 +141,9 @@ class WorkflowSubmitter:
             logger.error(error_message)
             raise WorkflowSubmissionError(error_message) from e
 
-    def find_task_by_label(self, label: str) -> Optional[Dict[str, Any]]:
+    def find_task_by_label(
+        self, label: str
+    ) -> tuple[Literal["found", "not_found", "unreachable"], Optional[Dict[str, Any]]]:
         """
         Finds a Pueue task by its label.
 
@@ -149,8 +151,8 @@ class WorkflowSubmitter:
             label: The label of the task to find.
 
         Returns:
-            A dictionary containing the task's info if found, otherwise None.
-            Returns None on communication errors.
+            A tuple containing the status and the task's info dictionary.
+            Status can be 'found', 'not_found', or 'unreachable'.
         """
         ssh_command = [
             self.ssh_cmd,
@@ -170,15 +172,19 @@ class WorkflowSubmitter:
                 if task_info.get("label") == label:
                     # Manually add the task_id to the dictionary for convenience
                     task_info["id"] = int(task_id)
-                    return task_info
+                    return "found", task_info
 
-            return None  # Label not found
+            return "not_found", None  # Label not found
 
-        except (subprocess.TimeoutExpired, subprocess.CalledProcessError, json.JSONDecodeError):
+        except (
+            subprocess.TimeoutExpired,
+            subprocess.CalledProcessError,
+            json.JSONDecodeError,
+        ):
             logger.warning(
-                f"Failed to query Pueue for label '{label}'. Assuming task not found."
+                f"Failed to query Pueue for label '{label}'. HPC may be unreachable."
             )
-            return None
+            return "unreachable", None
 
     def get_workflow_status(
         self, task_id: int
@@ -241,8 +247,8 @@ class WorkflowSubmitter:
         except (json.JSONDecodeError, KeyError) as e:
             logger.error(
                 f"Failed to parse Pueue status for task {task_id}. "
-                f"This may be an unrecoverable error. Error: {e}. "
-                "Marking as 'failure'.",
+                f"Output may be corrupted or format may have changed. Error: {e}. "
+                "Treating as unreachable and will retry.",
                 exc_info=True,
             )
-            return "failure"
+            return "unreachable"
