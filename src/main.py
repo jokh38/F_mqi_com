@@ -91,42 +91,84 @@ def main() -> None:
         # 5. Main Application Loop
         logging.info("Starting main application loop...")
         while True:
-            submitted_cases = db_manager.get_cases_by_status("submitted")
+            try:
+                # --- Part 1: Check status of RUNNING cases ---
+                running_cases = db_manager.get_cases_by_status("running")
+                if running_cases:
+                    logging.info(f"Found {len(running_cases)} running case(s) to check.")
+                for case in running_cases:
+                    case_id = case["case_id"]
+                    task_id = case["pueue_task_id"]
 
-            if not submitted_cases:
-                time.sleep(sleep_interval)
-                continue
+                    if task_id is None:
+                        logging.warning(
+                            f"Case ID {case_id} is 'running' but has no pueue_task_id. Marking as failed."
+                        )
+                        db_manager.update_case_completion(case_id, status="failed")
+                        continue
 
-            for case in submitted_cases:
-                case_id = case["case_id"]
-                case_path = case["case_path"]
-                logging.info(
-                    f"Processing submitted case ID: {case_id}, Path: {case_path}"
-                )
+                    status = workflow_submitter.get_workflow_status(task_id)
+                    logging.info(f"Case ID {case_id} (Task {task_id}) has remote status: '{status}'.")
 
-                try:
-                    db_manager.update_case_status(
-                        case_id, status="running", progress=10
-                    )
-                    logging.info(f"Case ID: {case_id} status updated to 'running'.")
+                    if status == "success":
+                        db_manager.update_case_completion(case_id, status="completed")
+                        logging.info(f"Case ID {case_id} successfully completed.")
+                    elif status == "failure":
+                        db_manager.update_case_completion(case_id, status="failed")
+                        logging.error(f"Case ID {case_id} failed in remote execution.")
+                    elif status == "not_found":
+                        logging.error(
+                            f"Case ID {case_id} (Task {task_id}) not found in Pueue. Marking as failed."
+                        )
+                        db_manager.update_case_completion(case_id, status="failed")
+                    # If status is 'running', do nothing and check again next cycle.
 
-                    workflow_submitter.submit_workflow(
-                        case_path=case_path, pueue_group=case["pueue_group"]
-                    )
+                # --- Part 2: Process new SUBMITTED cases ---
+                submitted_cases = db_manager.get_cases_by_status("submitted")
+                if submitted_cases:
+                    logging.info(f"Found {len(submitted_cases)} submitted case(s) to process.")
+                for case in submitted_cases:
+                    case_id = case["case_id"]
+                    case_path = case["case_path"]
                     logging.info(
-                        f"Case ID: {case_id} successfully submitted to workflow."
+                        f"Processing submitted case ID: {case_id}, Path: {case_path}"
                     )
 
-                    db_manager.update_case_status(
-                        case_id, status="running", progress=30
-                    )
+                    try:
+                        # Mark as 'submitting' to prevent re-processing
+                        db_manager.update_case_status(
+                            case_id, status="submitting", progress=10
+                        )
 
-                except Exception as e:
-                    logging.error(
-                        f"Failed to process case ID: {case_id}. Error: {e}",
-                        exc_info=True,
-                    )
-                    db_manager.update_case_completion(case_id, status="failed")
+                        pueue_task_id = workflow_submitter.submit_workflow(
+                            case_path=case_path, pueue_group=case["pueue_group"]
+                        )
+
+                        if pueue_task_id is not None:
+                            db_manager.update_case_pueue_task_id(case_id, pueue_task_id)
+                            db_manager.update_case_status(
+                                case_id, status="running", progress=30
+                            )
+                            logging.info(
+                                f"Case ID: {case_id} successfully submitted to workflow as Task ID: {pueue_task_id}."
+                            )
+                        else:
+                            # Handle case where submission succeeded but ID parsing failed
+                            logging.error(
+                                f"Failed to get Pueue Task ID for case ID: {case_id}."
+                            )
+                            db_manager.update_case_completion(case_id, status="failed")
+
+                    except Exception as e:
+                        logging.error(
+                            f"Failed to process case ID: {case_id}. Error: {e}",
+                            exc_info=True,
+                        )
+                        db_manager.update_case_completion(case_id, status="failed")
+
+            except Exception as e:
+                # Catch exceptions in the main loop itself to prevent crashing
+                logging.error(f"An unexpected error occurred in the main loop: {e}", exc_info=True)
 
             time.sleep(sleep_interval)
 

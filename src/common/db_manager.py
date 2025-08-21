@@ -57,6 +57,7 @@ class DatabaseManager:
                 status TEXT NOT NULL,
                 progress INTEGER NOT NULL,
                 pueue_group TEXT NOT NULL,
+                pueue_task_id INTEGER,
                 submitted_at DATETIME NOT NULL,
                 completed_at DATETIME
             )
@@ -126,6 +127,18 @@ class DatabaseManager:
             WHERE case_id = ?
         """,
             (status, progress, case_id),
+        )
+        self.conn.commit()
+
+    def update_case_pueue_task_id(self, case_id: int, pueue_task_id: int) -> None:
+        """Stores the Pueue task ID for a given case."""
+        self.cursor.execute(
+            """
+            UPDATE cases
+            SET pueue_task_id = ?
+            WHERE case_id = ?
+        """,
+            (pueue_task_id, case_id),
         )
         self.conn.commit()
 
