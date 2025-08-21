@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from watchdog.events import DirCreatedEvent
+from watchdog.events import DirCreatedEvent, FileCreatedEvent
 
 from src.services.case_scanner import CaseScanner, DirectoryCreatedEventHandler
 
@@ -43,6 +43,67 @@ def test_directory_creation_event_handler(MockDatabaseManager, temp_watch_dir: P
     mock_db_instance.add_case.assert_called_once_with(
         str(new_dir_path), test_pueue_group
     )
+
+
+@patch("src.common.db_manager.DatabaseManager")
+def test_directory_creation_event_handler_ignores_files(
+    MockDatabaseManager, temp_watch_dir: Path
+):
+    """
+    Tests that the event handler ignores file creation events.
+    """
+    # Arrange
+    mock_db_instance = MockDatabaseManager.return_value
+    handler = DirectoryCreatedEventHandler(
+        db_manager=mock_db_instance, pueue_group="test_gpu"
+    )
+
+    new_file_path = temp_watch_dir / "a_file.txt"
+    new_file_path.touch()
+
+    # Act
+    event = FileCreatedEvent(str(new_file_path))
+    handler.on_created(event)
+
+    # Assert
+    mock_db_instance.add_case.assert_not_called()
+
+
+@patch("src.services.case_scanner.logger.error")
+@patch("src.common.db_manager.DatabaseManager")
+def test_directory_creation_event_handler_handles_db_error(
+    MockDatabaseManager, mock_logger_error, temp_watch_dir: Path
+):
+    """
+    Tests that the event handler logs an error if adding a case to the
+    database fails, and does not crash.
+    """
+    # Arrange
+    mock_db_instance = MockDatabaseManager.return_value
+    mock_db_instance.add_case.side_effect = Exception("DB connection failed")
+    handler = DirectoryCreatedEventHandler(
+        db_manager=mock_db_instance, pueue_group="test_gpu"
+    )
+
+    new_dir_path = temp_watch_dir / "new_case_003"
+    new_dir_path.mkdir()
+
+    # Act
+    event = DirCreatedEvent(str(new_dir_path))
+    # We expect this to log an error but not raise an exception
+    handler.on_created(event)
+
+    # Assert
+    mock_db_instance.add_case.assert_called_once()
+    mock_logger_error.assert_called_once()
+    # Check that the log message contains the expected info
+    log_message = mock_logger_error.call_args.args[0]
+    assert "Failed to add case" in log_message
+    assert str(new_dir_path) in log_message
+    assert "DB connection failed" in log_message
+
+    # Verify that exc_info=True was passed to the logger to get the full traceback
+    assert mock_logger_error.call_args.kwargs["exc_info"] is True
 
 
 @patch("src.common.db_manager.DatabaseManager")

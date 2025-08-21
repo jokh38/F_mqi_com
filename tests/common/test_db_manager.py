@@ -218,3 +218,32 @@ def test_get_cases_by_status(db_manager: DatabaseManager):
     # Get 'failed' cases (should be empty)
     failed_cases = db_manager.get_cases_by_status("failed")
     assert len(failed_cases) == 0
+
+
+def test_database_initialization_with_config():
+    """
+    Tests if the DatabaseManager can be initialized using a config dictionary.
+    """
+    # Define a config and ensure the target DB file doesn't exist
+    config = {"database": {"path": TEST_DB_PATH}}
+    if os.path.exists(TEST_DB_PATH):
+        os.remove(TEST_DB_PATH)
+
+    # Initialize the manager with the config
+    manager = DatabaseManager(config=config)
+    assert manager.db_path == TEST_DB_PATH
+    assert os.path.exists(TEST_DB_PATH), "Database file was not created."
+
+    # Teardown
+    manager.close()
+    if os.path.exists(TEST_DB_PATH):
+        os.remove(TEST_DB_PATH)
+
+
+def test_database_initialization_raises_error():
+    """
+    Tests that a ValueError is raised if neither a db_path nor a config
+    is provided to the DatabaseManager.
+    """
+    with pytest.raises(ValueError, match="Either db_path or config must be provided."):
+        DatabaseManager()
