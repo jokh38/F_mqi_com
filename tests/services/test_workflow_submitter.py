@@ -92,7 +92,10 @@ class TestGetWorkflowStatus:
     def test_get_status_success(self, submitter):
         """Test status is 'success' for a 'Done' task."""
         with patch("subprocess.run") as mock_run:
-            mock_run.return_value = self.mock_pueue_status({"101": {"status": "Done"}})
+            # A 'Done' task must also have a 'success' result to be considered successful
+            mock_run.return_value = self.mock_pueue_status(
+                {"101": {"status": "Done", "result": "success"}}
+            )
             status = submitter.get_workflow_status(101)
             assert status == "success"
 
@@ -136,4 +139,13 @@ class TestGetWorkflowStatus:
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="not json", stderr="")
             status = submitter.get_workflow_status(107)
+            assert status == "failure"
+
+    def test_get_status_done_with_failure_result(self, submitter):
+        """Test status is 'failure' for a 'Done' task with a 'failure' result."""
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = self.mock_pueue_status(
+                {"108": {"status": "Done", "result": "failure"}}
+            )
+            status = submitter.get_workflow_status(108)
             assert status == "failure"

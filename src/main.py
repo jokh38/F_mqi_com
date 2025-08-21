@@ -93,6 +93,20 @@ def main(config: Dict[str, Any]) -> None:
         logging.info("Starting main application loop...")
         while True:
             try:
+                # --- Part 0: Handle potentially stuck cases ---
+                stuck_submitting_cases = db_manager.get_cases_by_status("submitting")
+                if stuck_submitting_cases:
+                    logging.warning(
+                        f"Found {len(stuck_submitting_cases)} case(s) stuck in 'submitting' state. Resetting..."
+                    )
+                    for case in stuck_submitting_cases:
+                        case_id = case["case_id"]
+                        logging.info(
+                            f"Resetting case ID {case_id} to 'submitted' and releasing its GPU."
+                        )
+                        db_manager.release_gpu_resource(case_id)
+                        db_manager.update_case_status(case_id, "submitted", 0)
+
                 # --- Part 1: Check status of RUNNING cases ---
                 running_cases = db_manager.get_cases_by_status("running")
                 if running_cases:

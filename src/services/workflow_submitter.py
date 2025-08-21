@@ -165,10 +165,15 @@ class WorkflowSubmitter:
                 return "not_found"
 
             task_info = tasks[str(task_id)]
-            status = task_info["status"]
+            status = task_info.get("status")
 
             if status == "Done":
-                return "success"
+                # For a 'Done' task, we must check the 'result' to be sure.
+                if task_info.get("result") == "success":
+                    return "success"
+                else:
+                    # Any other result ('failure', or a numeric exit code) is a failure.
+                    return "failure"
             elif status in ["Failed", "Killing"]:
                 return "failure"
             else:
