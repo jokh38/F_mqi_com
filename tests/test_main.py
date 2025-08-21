@@ -184,3 +184,60 @@ def test_main_handles_critical_exception(
 
     mock_log_critical.assert_called_once()
     assert "Failed to load config" in mock_log_critical.call_args[0][0]
+
+
+@patch("src.main.logging.error")
+@patch("src.main.time.sleep")
+@patch("src.main.WorkflowSubmitter")
+@patch("src.main.CaseScanner")
+@patch("src.main.DatabaseManager")
+@patch("builtins.open")
+@patch("src.main.yaml.safe_load")
+def test_main_loop_handles_submission_failure(
+    mock_safe_load,
+    mock_open,
+    MockDatabaseManager,
+    MockCaseScanner,
+    MockWorkflowSubmitter,
+    mock_sleep,
+    mock_log_error,
+    mock_config,
+):
+    """
+    Tests that the main loop catches an exception during workflow submission,
+    logs the error, and marks the case as 'failed'.
+    """
+    # Arrange
+    mock_safe_load.return_value = mock_config
+    mock_db = MockDatabaseManager.return_value
+    mock_submitter = MockWorkflowSubmitter.return_value
+
+    # Simulate a submitted case being found, then no more cases
+    test_case = {
+        "case_id": 1,
+        "case_path": "/path/to/failed_case",
+        "pueue_group": "test_group",
+    }
+    mock_db.get_cases_by_status.side_effect = [[test_case], []]
+
+    # Simulate an error during the submission process
+    submission_error = Exception("SSH connection failed")
+    mock_submitter.submit_workflow.side_effect = submission_error
+
+    # Act
+    main()
+
+    # Assert
+    # Check that the workflow submission was attempted
+    mock_submitter.submit_workflow.assert_called_once_with(
+        case_path="/path/to/failed_case", pueue_group="test_group"
+    )
+
+    # Check that the error was logged correctly
+    mock_log_error.assert_called_once()
+    log_args, log_kwargs = mock_log_error.call_args
+    assert "Failed to process case ID: 1" in log_args[0]
+    assert log_kwargs["exc_info"] is True
+
+    # Crucially, check that the case status was updated to 'failed'
+    mock_db.update_case_completion.assert_called_once_with(1, status="failed")
