@@ -15,10 +15,7 @@ logger = logging.getLogger(__name__)
 class StableDirectoryEventHandler(FileSystemEventHandler):
     """
     An event handler that waits for a directory to be "stable" before processing.
-
-    A directory is considered stable if no file system events have occurred
-    within it for a specified delay period. This helps prevent processing
-    incomplete directories that are still being copied.
+    Includes a retry mechanism for database operations.
     """
 
     def __init__(
@@ -26,42 +23,78 @@ class StableDirectoryEventHandler(FileSystemEventHandler):
         watch_path: str,
         db_manager: DatabaseManager,
         stability_delay: float,
+        max_retries: int = 3,
+        retry_delay: float = 10.0,
     ):
         self.watch_path = watch_path
         self.db_manager = db_manager
         self.stability_delay = stability_delay
+        self.max_retries = max_retries
+        self.retry_delay = retry_delay
+
         self.timers: Dict[str, threading.Timer] = {}
+        self.retries: Dict[str, int] = {}
         self.lock = threading.Lock()
 
     def _process_directory(self, path_str: str) -> None:
-        """The callback executed when a directory is deemed stable."""
-        with self.lock:
-            # Remove the timer from the tracking dictionary
-            self.timers.pop(path_str, None)
-
+        """
+        The callback executed when a directory is deemed stable.
+        If the database operation fails, it will retry up to `max_retries`.
+        """
         # Before processing, ensure the directory still exists.
         if not os.path.isdir(path_str):
             logger.warning(
                 f"Directory '{path_str}' was deleted before it could be processed. Skipping."
             )
+            with self.lock:
+                self.timers.pop(path_str, None)
+                self.retries.pop(path_str, None)
             return
 
-        logger.info(f"Directory '{path_str}' is stable. Adding to database.")
+        logger.info(f"Directory '{path_str}' is stable. Attempting to add to database.")
         try:
             # Check if the case already exists to prevent duplicates from multiple events
             if not self.db_manager.get_case_by_path(path_str):
-                # The pueue_group is no longer assigned here.
                 self.db_manager.add_case(path_str)
                 logger.info(f"Successfully added case '{path_str}' to the database.")
             else:
                 logger.warning(
                     f"Case '{path_str}' already exists in the database. Skipping."
                 )
+
+            # On success, clear the timer and any retry counts
+            with self.lock:
+                self.timers.pop(path_str, None)
+                self.retries.pop(path_str, None)
+
         except Exception as e:
-            logger.error(
-                f"Failed to add case '{path_str}' to the database. Error: {e}",
-                exc_info=True,
-            )
+            logger.error(f"Failed to add case '{path_str}' to the database. Error: {e}")
+            self._handle_processing_failure(path_str)
+
+    def _handle_processing_failure(self, path_str: str) -> None:
+        """Handles the logic for retrying a failed directory processing."""
+        with self.lock:
+            current_retries = self.retries.get(path_str, 0)
+            if current_retries < self.max_retries:
+                self.retries[path_str] = current_retries + 1
+                logger.info(
+                    f"Scheduling retry {current_retries + 1}/{self.max_retries} for "
+                    f"'{path_str}' in {self.retry_delay} seconds."
+                )
+                # Reschedule the timer to try again
+                retry_timer = threading.Timer(
+                    self.retry_delay, self._process_directory, args=[path_str]
+                )
+                self.timers[path_str] = retry_timer
+                retry_timer.start()
+            else:
+                logger.critical(
+                    f"Failed to process '{path_str}' after {self.max_retries + 1} attempts. "
+                    "Giving up on this directory. Please check logs and database."
+                )
+                # Give up, clear the timer and retry count
+                self.timers.pop(path_str, None)
+                self.retries.pop(path_str, None)
 
     def on_any_event(self, event: FileSystemEvent) -> None:
         """
@@ -154,6 +187,7 @@ class CaseScanner:
         with self.event_handler.lock:
             for timer in self.event_handler.timers.values():
                 timer.cancel()
+            self.event_handler.retries.clear()
         self.observer.stop()
         self.observer.join()
         logger.info("Stopped watching directory.")

@@ -41,30 +41,7 @@ I've identified a design flaw in the `update_case_completion` function within `s
 
 **The Issue:**
 
-The function is defined as follows:
-
-```python
-def update_case_completion(self, case_id: int, status: str) -> None:
-    # ...
-    self.cursor.execute(
-        """
-        UPDATE cases
-        SET status = ?,
-            progress = 100,
-            completed_at = ?,
-            status_updated_at = ?,
-            pueue_group = NULL,      -- This line erases the GPU group info
-            pueue_task_id = NULL   -- This line erases the remote task ID
-        WHERE case_id = ?
-        """,
-        # ...
-    )
-    # ...
-```
-
-When a case is marked as `completed` or `failed`, this query explicitly sets `pueue_group` and `pueue_task_id` to `NULL`. This action erases valuable historical data. After a case is finished, it becomes impossible to determine which GPU resource it ran on or what its corresponding remote task ID was. This information is crucial for auditing, debugging, and performance analysis.
-
-The subsequent call to `db_manager.release_gpu_resource(case_id)` correctly handles freeing the resource in the `gpu_resources` table, so nullifying these fields in the `cases` table is not necessary for the system's resource management logic.
+The function was explicitly setting `pueue_group` and `pueue_task_id` to `NULL` upon case completion. This action erases valuable historical data, making it impossible to audit which resource a case ran on.
 
 **Proposed Solution:**
 
@@ -87,16 +64,37 @@ I've identified a resource leak issue in the handling of timed-out jobs.
 
 **The Issue:**
 
-The logic correctly identifies when a case has been in the 'running' state for too long (defaulting to 24 hours). When a timeout is detected, the application performs these steps:
-1.  Logs a critical error.
-2.  Updates the case status to `failed` in the local database.
-3.  Releases the GPU resource in the local database, making it available for new cases.
-
-However, it **does not** attempt to stop the actual job running on the remote HPC. This creates a "zombie" process. The local application thinks the GPU is free, but the corresponding `pueue` slot on the HPC is still occupied by the timed-out job. This will prevent new jobs assigned to that `pueue` group from running, effectively creating a resource leak on the HPC.
+The logic correctly identifies when a case has been in the 'running' state for too long. However, it **does not** attempt to stop the actual job running on the remote HPC. This creates a "zombie" process, consuming an HPC resource slot even though the local application considers it free.
 
 **Proposed Solution:**
 
-When a timeout is detected, the application must actively attempt to kill the job on the remote HPC before updating its local state.
+When a timeout is detected, the application must actively attempt to kill the job on the remote HPC.
 
-1.  **Implement `kill_workflow`:** A new method, `kill_workflow(task_id)`, was added to the `WorkflowSubmitter` class. This method executes `pueue kill <task_id>` on the remote HPC via SSH.
-2.  **Integrate into Timeout Logic:** The main loop in `src/main.py` was updated. Now, when a timeout occurs, it calls `workflow_submitter.kill_workflow(task_id)` and logs the result before proceeding to update the local database. This ensures that a best-effort attempt is made to clean up the remote resource, preventing the leak.
+1.  **Implement `kill_workflow`:** A new method, `kill_workflow(task_id)`, was added to the `WorkflowSubmitter` class.
+2.  **Integrate into Timeout Logic:** The main loop in `src/main.py` was updated to call `workflow_submitter.kill_workflow(task_id)` before marking a timed-out case as failed.
+
+---
+
+## Trace Step 4 (Round 2): Resilience of the Case Scanner
+
+- **File:** `src/services/case_scanner.py`
+- **Class:** `StableDirectoryEventHandler`
+- **Method:** `_process_directory()`
+
+In a second round of analysis, I focused on the resilience of the background services.
+
+### **Problem 3: Lack of Resilience to DB Errors**
+
+I've identified a critical flaw in the `StableDirectoryEventHandler`. If the `_process_directory` method fails to add a case to the database (due to a transient error like a temporary lock), the case is permanently dropped because the one-shot `threading.Timer` that triggered the processing is not rescheduled.
+
+**Solution:**
+
+A retry mechanism has been implemented directly within the `StableDirectoryEventHandler`.
+
+1.  **Retry Logic:** The handler now maintains a retry counter for each directory path.
+2.  **Updated `_process_directory`:**
+    *   **On DB Success:** The case is added, and the timer and retry count for that path are cleared.
+    *   **On DB Failure:** The handler logs the error and checks the retry count. If the count is below a configured maximum (defaulting to 3), it schedules a *new* timer to re-run `_process_directory` after a delay. If the maximum retries have been exceeded, it logs a critical error and gives up.
+3.  **New Test Case:** A new test was added to `tests/services/test_case_scanner.py` to simulate a database failure and assert that the retry mechanism is correctly triggered.
+
+This change significantly improves the robustness of the application, ensuring that temporary database issues do not lead to permanent data loss.
