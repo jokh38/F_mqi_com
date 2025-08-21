@@ -5,3 +5,9 @@ hpc:
   host: "your_hpc_hostname"
   user: "your_username"
   remote_base_dir: "/path/to/remote/dir"
+
+scanner:
+  watch_path: "new_cases" # Directory to watch for new cases
+
+pueue:
+  default_group: "default" # Default pueue group for new tasks
