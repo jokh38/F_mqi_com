@@ -91,7 +91,9 @@ def main(config: Dict[str, Any]) -> None:
         workflow_submitter = WorkflowSubmitter(config=config)
         logging.info("WorkflowSubmitter initialized.")
 
-        case_scanner = CaseScanner(watch_path=watch_path, db_manager=db_manager)
+        case_scanner = CaseScanner(
+            watch_path=watch_path, db_manager=db_manager, config=config
+        )
         logging.info("CaseScanner initialized.")
 
         # 4. Start Background Services

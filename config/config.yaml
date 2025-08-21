@@ -17,6 +17,9 @@ hpc:
 
 scanner:
   watch_path: "new_cases" # Directory to watch for new cases
+  # Time (in seconds) to wait for a directory to be "quiet" (no new file
+  # modifications) before it's considered complete and added to the queue.
+  quiescence_period_seconds: 5
 
 main_loop:
   sleep_interval_seconds: 10 # Time to wait between polling for new cases

@@ -137,7 +137,10 @@ def test_case_scanner_integration(MockObserver, mock_db_manager: Mock, temp_watc
     Tests the CaseScanner class integration with the observer.
     """
     # Arrange
-    scanner = CaseScanner(watch_path=str(temp_watch_dir), db_manager=mock_db_manager)
+    mock_config = {"scanner": {"quiescence_period_seconds": 0.01}}
+    scanner = CaseScanner(
+        watch_path=str(temp_watch_dir), db_manager=mock_db_manager, config=mock_config
+    )
     mock_observer_instance = MockObserver.return_value
 
     # Act

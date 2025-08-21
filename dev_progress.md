@@ -1,65 +1,36 @@
-# Development Progress Report
+# Development Progress Report - Cycle 2
 
-## Part 1: Logical Code Flow Analysis
+## Part 1: Logical Code Flow Analysis (Case Detection)
 
-The application is designed to process simulation cases by sending them to a remote High-Performance Computing (HPC) environment managed by `pueue`. The logical flow for a new case is as follows:
+After resolving the submission race condition, the next logical area to inspect is the initial detection of new cases. The flow is as follows:
 
-1.  **Detection**: A `CaseScanner` service watches a directory (`new_cases/`) for new case folders.
-2.  **DB Registration**: Upon detection, the new case path is registered in a local SQLite database with the status `submitted`.
-3.  **Processing Loop**: The main application loop in `main.py` periodically queries the database for cases with the `submitted` status.
-4.  **Resource Locking**: For each `submitted` case, the application attempts to lock an available GPU resource. The resource is represented by a `pueue` group (e.g., `gpu_a`). If successful, the resource's status is changed to `assigned` in the database.
-5.  **Pre-Submission State Change**: The case's status is updated to `submitting`. **This is a critical point in the original code.**
-6.  **Remote Submission**: The `WorkflowSubmitter` class is used to:
-    a.  Transfer the case files to the HPC via `scp`.
-    b.  Submit a new job to the remote `pueue` daemon via `ssh`.
-7.  **Post-Submission State Change**: If the submission is successful and a `pueue_task_id` is received, the case's status is updated to `running` in the database.
+1.  **Watch Service**: The `CaseScanner` service uses the `watchdog` library to monitor the `new_cases/` directory for any file system events.
+2.  **Event Trigger**: When a new directory, e.g., `case_xyz`, is created inside `new_cases/`, `watchdog` is intended to fire an event.
+3.  **Immediate DB Insertion**: The event handler is designed to immediately take the path of the new directory and call `db_manager.add_case()`, which inserts it into the database with the status `submitted`.
+4.  **Main Loop Pickup**: The main application loop, which polls the database every few seconds, quickly picks up this new `submitted` case for processing.
 
-## Part 2: Predicted Problem and Root Cause
+## Part 2: Predicted Problem: The "Incomplete Case" Race Condition
 
-A critical flaw was identified in the original workflow. The state of the application could become inconsistent if a crash or shutdown occurred during the "danger zone"—the period after the case status was set to `submitting` but before the remote job's `pueue_task_id` was successfully stored in the local database.
+A significant race condition exists in the case detection logic. The `CaseScanner` is too "eager" and acts on incomplete information.
 
 **Problem Trace:**
 
-1.  A case `C1` is picked up, and a GPU resource is locked for it.
-2.  The status of `C1` is updated to `submitting` in the database.
-3.  The `submit_workflow` function successfully creates a job on the remote HPC.
-4.  **The application crashes** before the `pueue_task_id` for the new job is saved for `C1` and its status is updated to `running`.
+1.  A user or an automated process begins copying a large case directory (containing multiple files and subdirectories) into the `new_cases/` directory.
+2.  The top-level directory (e.g., `new_cases/case_xyz`) is created on the filesystem almost instantly, while its contents are still being copied.
+3.  The `watchdog` observer in `CaseScanner` detects the creation of this new directory and immediately triggers its event handler.
+4.  The handler adds the `case_xyz` path to the database as a `submitted` case.
+5.  Within seconds, the main loop picks up `case_xyz` for processing and initiates an `scp` transfer to the remote HPC.
+6.  **The `scp` command reads the `case_xyz` directory while files are still being written to it.** This results in an incomplete or corrupted copy of the case being sent to the HPC.
+7.  The remote job inevitably fails due to missing or incomplete files, wasting HPC resources and leading to incorrect failure reports.
 
-**Consequence on Restart:**
+## Part 3: Implemented Solution: Configurable Quiescence Period
 
-1.  The application starts up and its recovery logic finds case `C1` in the `submitting` state.
-2.  The original code treated this state as an unrecoverable error. It would automatically change the case's status to `failed` and release the locked GPU resource in the database.
-3.  **This created a severe inconsistency:**
-    *   **Local State:** The database shows case `C1` as `failed` and the GPU as `available`.
-    *   **Remote State:** An **orphaned job** for case `C1` is still running (or queued) on the HPC, consuming a real GPU.
-4.  The application, now believing the GPU is free, would likely assign a new case to it, leading to resource conflicts, job failures, and an unreliable system.
+The existing code already contained a basic "quiescence" mechanism to address this, but it used a hardcoded delay value and was not properly integrated with the application's configuration. The solution was to refactor this implementation to make it robust and configurable.
 
-## Part 3: Implemented Solution
+### 1. Made Quiescence Configurable
 
-To resolve this, the system was refactored to be self-healing and resilient to crashes during submission. The solution involved adding traceability to remote jobs and implementing intelligent recovery logic.
+*   **`config/config.yaml`**: A new parameter, `quiescence_period_seconds`, was added under the `scanner` section, with a descriptive comment. This allows administrators to tune the delay based on network speed and typical case size.
+*   **`src/services/case_scanner.py`**: The hardcoded `STABILITY_DELAY_SECONDS` constant was removed. The `CaseScanner` class was modified to accept the application's `config` dictionary in its constructor. It now reads the `quiescence_period_seconds` from the config and passes it to the `StableDirectoryEventHandler`.
+*   **`src/main.py`**: The instantiation of `CaseScanner` was updated to pass the loaded `config` object, properly wiring the new configuration into the scanner service.
 
-### 1. Enhanced Workflow Submitter for Traceability
-
-The `src/services/workflow_submitter.py` file was modified:
-
-*   The `submit_workflow` method was updated to accept the `case_id`. It now uses the `pueue add` command's `--label` flag to tag each remote job with a unique, predictable identifier (e.g., `mqic_case_123`). This creates a durable link between the local database record and the remote process.
-*   A new method, `find_task_by_label(label)`, was created. This method connects to the HPC, queries `pueue status --json`, and searches for a job with the specified label, returning the job's details if found.
-
-### 2. Implemented Self-Healing Recovery Logic
-
-The main loop in `src/main.py` was significantly improved:
-
-*   The logic for handling cases in the `submitting` state at startup was completely replaced.
-*   The new "self-healing" logic is as follows:
-    1.  For each case found in the `submitting` state, construct the expected label (e.g., `mqic_case_123`).
-    2.  Call the new `workflow_submitter.find_task_by_label()` method to check if a corresponding job already exists on the HPC.
-    3.  **If a matching remote task is found:** This means the submission succeeded, but the local update failed. The application now recovers automatically by:
-        *   Extracting the `pueue_task_id` from the remote job's data.
-        *   Updating the local case record with this `pueue_task_id`.
-        *   Changing the case's status to `running`.
-        *   This action successfully "recovers" the orphaned process and brings the system back into a consistent state.
-    4.  **If no matching remote task is found:** This confirms that the submission process failed before a job was created. It is now safe to:
-        *   Mark the case as `failed`.
-        *   Release the GPU resource in the database.
-
-This solution eliminates the race condition and ensures that the application's state remains consistent even in the event of a crash during the critical submission phase.
+This refactoring makes the file-watching logic more robust and adaptable. By waiting for a configurable period of inactivity before processing a new directory, the application can be confident that the directory copy is complete, thus preventing the "incomplete case" problem.
