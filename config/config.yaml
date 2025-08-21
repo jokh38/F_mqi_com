@@ -20,6 +20,7 @@ scanner:
 
 main_loop:
   sleep_interval_seconds: 10 # Time to wait between polling for new cases
+  running_case_timeout_hours: 24 # After this many hours, a 'running' case with no status update is marked as failed.
 
 pueue:
   # List of all pueue groups that the application can manage.

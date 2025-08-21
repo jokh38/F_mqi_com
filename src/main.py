@@ -1,4 +1,5 @@
 import logging
+import sys
 import time
 import yaml
 from logging.handlers import RotatingFileHandler
@@ -76,8 +77,12 @@ def main(config: Dict[str, Any]) -> None:
             logging.info(f"Ensured GPU resource for group '{group}' exists.")
 
         # 5. Continue Component Initialization
+        main_loop_config = config.get("main_loop", {})
         watch_path = config.get("scanner", {}).get("watch_path", "new_cases")
-        sleep_interval = config.get("main_loop", {}).get("sleep_interval_seconds", 10)
+        sleep_interval = main_loop_config.get("sleep_interval_seconds", 10)
+        running_case_timeout_hours = main_loop_config.get("running_case_timeout_hours", 24)
+        timeout_delta = timedelta(hours=running_case_timeout_hours)
+
 
         workflow_submitter = WorkflowSubmitter(config=config)
         logging.info("WorkflowSubmitter initialized.")
@@ -107,11 +112,33 @@ def main(config: Dict[str, Any]) -> None:
                         db_manager.release_gpu_resource(case_id)
                         db_manager.update_case_status(case_id, "submitted", 0)
 
-                # --- Part 1: Check status of RUNNING cases ---
+                # --- Part 0.5: Handle timed-out 'running' cases ---
                 running_cases = db_manager.get_cases_by_status("running")
+                active_running_cases = []
                 if running_cases:
-                    logging.info(f"Found {len(running_cases)} running case(s) to check.")
-                for case in running_cases:
+                    for case in running_cases:
+                        case_id = case["case_id"]
+                        status_updated_at = datetime.fromisoformat(
+                            case["status_updated_at"]
+                        )
+
+                        if datetime.now(KST) - status_updated_at > timeout_delta:
+                            logging.critical(
+                                f"Case ID {case_id} has been in 'running' state for more than "
+                                f"{running_case_timeout_hours} hours. Marking as failed due to timeout."
+                            )
+                            db_manager.update_case_completion(case_id, status="failed")
+                            db_manager.release_gpu_resource(case_id)
+                            logging.info(
+                                f"Released GPU resource for timed-out case ID: {case_id}."
+                            )
+                        else:
+                            active_running_cases.append(case)
+
+                # --- Part 1: Check status of active RUNNING cases ---
+                if active_running_cases:
+                    logging.info(f"Found {len(active_running_cases)} active running case(s) to check.")
+                for case in active_running_cases:
                     case_id = case["case_id"]
                     task_id = case["pueue_task_id"]
 
@@ -189,7 +216,7 @@ def main(config: Dict[str, Any]) -> None:
                                 else:
                                     # Handle case where submission succeeded but ID parsing failed
                                     logging.error(
-                                        f"Failed to get Pueue Task ID for case ID: {case_id}."
+                                        f"Workflow for case ID {case_id} submitted, but failed to parse Pueue Task ID from output. Marking as failed."
                                     )
                                     db_manager.update_case_completion(
                                         case_id, status="failed"
@@ -253,8 +280,10 @@ if __name__ == "__main__":
             initial_config = yaml.safe_load(f)
         setup_logging(initial_config)
     except FileNotFoundError:
-        print(f"ERROR: {CONFIG_PATH} not found. Cannot configure logging.")
+        print(f"ERROR: Configuration file not found at '{CONFIG_PATH}'. The application cannot start.")
+        sys.exit(1)
     except Exception as e:
-        print(f"ERROR: Failed to configure logging from config.yaml: {e}")
+        print(f"ERROR: Failed to load or parse '{CONFIG_PATH}'. Error: {e}")
+        sys.exit(1)
 
     main(initial_config)

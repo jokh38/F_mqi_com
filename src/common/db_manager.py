@@ -59,7 +59,8 @@ class DatabaseManager:
                 pueue_group TEXT,
                 pueue_task_id INTEGER,
                 submitted_at DATETIME NOT NULL,
-                completed_at DATETIME
+                completed_at DATETIME,
+                status_updated_at DATETIME NOT NULL
             )
         """
         )
@@ -89,13 +90,13 @@ class DatabaseManager:
         Returns:
             The ID of the newly inserted case.
         """
-        submitted_time = datetime.now(KST).isoformat()
+        now_iso = datetime.now(KST).isoformat()
         self.cursor.execute(
             """
-            INSERT INTO cases (case_path, status, progress, submitted_at)
-            VALUES (?, 'submitted', 0, ?)
+            INSERT INTO cases (case_path, status, progress, submitted_at, status_updated_at)
+            VALUES (?, 'submitted', 0, ?, ?)
             """,
-            (case_path, submitted_time),
+            (case_path, now_iso, now_iso),
         )
         self.conn.commit()
         return self.cursor.lastrowid
@@ -120,13 +121,14 @@ class DatabaseManager:
 
     def update_case_status(self, case_id: int, status: str, progress: int) -> None:
         """Updates the status and progress of a case."""
+        now_iso = datetime.now(KST).isoformat()
         self.cursor.execute(
             """
             UPDATE cases
-            SET status = ?, progress = ?
+            SET status = ?, progress = ?, status_updated_at = ?
             WHERE case_id = ?
         """,
-            (status, progress, case_id),
+            (status, progress, now_iso, case_id),
         )
         self.conn.commit()
 
@@ -161,10 +163,10 @@ class DatabaseManager:
         self.cursor.execute(
             """
             UPDATE cases
-            SET status = ?, progress = 100, completed_at = ?
+            SET status = ?, progress = 100, completed_at = ?, status_updated_at = ?
             WHERE case_id = ?
         """,
-            (status, completion_time, case_id),
+            (status, completion_time, completion_time, case_id),
         )
         self.conn.commit()
 
