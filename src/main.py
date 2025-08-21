@@ -2,6 +2,7 @@ import logging
 import sys
 import time
 import yaml
+import os
 from logging.handlers import RotatingFileHandler
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any
@@ -83,6 +84,9 @@ def main(config: Dict[str, Any]) -> None:
         running_case_timeout_hours = main_loop_config.get("running_case_timeout_hours", 24)
         timeout_delta = timedelta(hours=running_case_timeout_hours)
 
+        # Ensure the watch path exists before starting the scanner
+        os.makedirs(watch_path, exist_ok=True)
+        logging.info(f"Ensured watch directory exists: {watch_path}")
 
         workflow_submitter = WorkflowSubmitter(config=config)
         logging.info("WorkflowSubmitter initialized.")
