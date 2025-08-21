@@ -56,7 +56,7 @@ class DatabaseManager:
                 case_path TEXT NOT NULL UNIQUE,
                 status TEXT NOT NULL,
                 progress INTEGER NOT NULL,
-                pueue_group TEXT NOT NULL,
+                pueue_group TEXT,
                 pueue_task_id INTEGER,
                 submitted_at DATETIME NOT NULL,
                 completed_at DATETIME
@@ -81,21 +81,21 @@ class DatabaseManager:
         """Public method to initialize the database."""
         self._create_tables()
 
-    def add_case(self, case_path: str, pueue_group: str) -> Optional[int]:
+    def add_case(self, case_path: str) -> Optional[int]:
         """
         Adds a new case to the database with 'submitted' status.
+        The `pueue_group` is initially NULL and will be assigned when a resource is locked.
 
         Returns:
             The ID of the newly inserted case.
         """
-        # Get current time in KST and format as ISO 8601 string
         submitted_time = datetime.now(KST).isoformat()
         self.cursor.execute(
             """
-            INSERT INTO cases (case_path, status, progress, pueue_group, submitted_at)
-            VALUES (?, 'submitted', 0, ?, ?)
-        """,
-            (case_path, pueue_group, submitted_time),
+            INSERT INTO cases (case_path, status, progress, submitted_at)
+            VALUES (?, 'submitted', 0, ?)
+            """,
+            (case_path, submitted_time),
         )
         self.conn.commit()
         return self.cursor.lastrowid
@@ -139,6 +139,18 @@ class DatabaseManager:
             WHERE case_id = ?
         """,
             (pueue_task_id, case_id),
+        )
+        self.conn.commit()
+
+    def update_case_pueue_group(self, case_id: int, pueue_group: str) -> None:
+        """Assigns a Pueue group to a case after a resource has been locked."""
+        self.cursor.execute(
+            """
+            UPDATE cases
+            SET pueue_group = ?
+            WHERE case_id = ?
+        """,
+            (pueue_group, case_id),
         )
         self.conn.commit()
 
@@ -200,38 +212,43 @@ class DatabaseManager:
         )
         self.conn.commit()
 
-    def find_and_lock_available_gpu(self, pueue_group: str, case_id: int) -> bool:
+    def find_and_lock_any_available_gpu(self, case_id: int) -> Optional[str]:
         """
-        Atomically finds an available GPU resource for a specific group and locks it.
+        Atomically finds any available GPU resource across all groups and locks it.
+        This is a critical transactional operation to prevent race conditions.
 
         Args:
-            pueue_group: The pueue group to check for an available resource.
             case_id: The ID of the case to assign to the resource.
 
         Returns:
-            True if a resource was successfully locked, False otherwise.
+            The `pueue_group` name if a resource was successfully locked, None otherwise.
         """
         with self.conn:  # Ensures the block is executed in a transaction
+            # Find the first available resource
             self.cursor.execute(
                 """
                 SELECT pueue_group FROM gpu_resources
-                WHERE pueue_group = ? AND status = 'available'
-                """,
-                (pueue_group,),
+                WHERE status = 'available'
+                LIMIT 1
+                """
             )
             resource = self.cursor.fetchone()
 
             if resource:
+                pueue_group = resource["pueue_group"]
+                # Lock the found resource
                 self.cursor.execute(
                     """
                     UPDATE gpu_resources
                     SET status = 'assigned', assigned_case_id = ?
-                    WHERE pueue_group = ?
+                    WHERE pueue_group = ? AND status = 'available'
                     """,
                     (case_id, pueue_group),
                 )
-                return True
-        return False
+                # Check if the update was successful (i.e., the row was not locked by another process)
+                if self.cursor.rowcount > 0:
+                    return pueue_group
+        return None
 
     def release_gpu_resource(self, case_id: int) -> None:
         """
