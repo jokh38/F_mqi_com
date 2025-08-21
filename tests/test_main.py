@@ -133,7 +133,9 @@ def test_main_loop_submits_case_with_available_gpu(mock_dependencies):
     mocks["db"].update_case_pueue_group.assert_called_once_with(4, "gpu_b")
 
     # Verify the submission
-    mocks["submitter"].submit_workflow.assert_called_once_with(case_path="/path/new", pueue_group="gpu_b")
+    mocks["submitter"].submit_workflow.assert_called_once_with(
+        case_id=4, case_path="/path/new", pueue_group="gpu_b"
+    )
     mocks["db"].update_case_pueue_task_id.assert_called_once_with(4, 201)
 
     # Verify status updates
@@ -187,7 +189,9 @@ def test_main_loop_handles_submission_id_failure(mock_dependencies):
 
     # Verify lock and submission attempt
     mocks["db"].find_and_lock_any_available_gpu.assert_called_once_with(6)
-    mocks["submitter"].submit_workflow.assert_called_once_with(case_path="/path/id_fail", pueue_group="gpu_a")
+    mocks["submitter"].submit_workflow.assert_called_once_with(
+        case_id=6, case_path="/path/id_fail", pueue_group="gpu_a"
+    )
 
     # Verify failure handling
     mocks["db"].update_case_completion.assert_called_once_with(6, status="failed")

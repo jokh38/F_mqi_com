@@ -47,7 +47,9 @@ class WorkflowSubmitter:
             return int(match.group(1))
         return None
 
-    def submit_workflow(self, case_path: str, pueue_group: str = "default") -> Optional[int]:
+    def submit_workflow(
+        self, case_id: int, case_path: str, pueue_group: str = "default"
+    ) -> Optional[int]:
         """
         Submits a case to the HPC for simulation and returns the Pueue task ID.
 
@@ -56,6 +58,7 @@ class WorkflowSubmitter:
         2. Submits a job to the Pueue daemon to run the simulation script.
 
         Args:
+            case_id: The database ID of the case, used for labeling the remote job.
             case_path: The local path to the case directory.
             pueue_group: The Pueue group to assign the job to.
 
@@ -69,6 +72,7 @@ class WorkflowSubmitter:
         # Sanitize case_name to prevent directory traversal
         safe_case_name = Path(case_name).name
         remote_path = f"{self.hpc_config['remote_base_dir']}/{safe_case_name}"
+        label = f"mqic_case_{case_id}"
 
         # 1. Transfer files using scp
         scp_cmd = self.hpc_config.get("scp_command", "scp")
@@ -107,13 +111,17 @@ class WorkflowSubmitter:
             f"{self.user}@{self.host}",
             self.pueue_cmd,
             "add",
+            "--label",
+            label,
             "--group",
             pueue_group,
             "--",
             remote_command,
         ]
         try:
-            logger.info(f"Submitting job for case '{safe_case_name}' to Pueue...")
+            logger.info(
+                f"Submitting job for case '{safe_case_name}' (Label: {label}) to Pueue..."
+            )
             result = subprocess.run(
                 ssh_command, check=True, capture_output=True, text=True, timeout=60
             )
@@ -132,6 +140,45 @@ class WorkflowSubmitter:
             )
             logger.error(error_message)
             raise WorkflowSubmissionError(error_message) from e
+
+    def find_task_by_label(self, label: str) -> Optional[Dict[str, Any]]:
+        """
+        Finds a Pueue task by its label.
+
+        Args:
+            label: The label of the task to find.
+
+        Returns:
+            A dictionary containing the task's info if found, otherwise None.
+            Returns None on communication errors.
+        """
+        ssh_command = [
+            self.ssh_cmd,
+            f"{self.user}@{self.host}",
+            self.pueue_cmd,
+            "status",
+            "--json",
+        ]
+        try:
+            result = subprocess.run(
+                ssh_command, check=True, capture_output=True, text=True, timeout=60
+            )
+            status_data = json.loads(result.stdout)
+            tasks = status_data.get("tasks", {})
+
+            for task_id, task_info in tasks.items():
+                if task_info.get("label") == label:
+                    # Manually add the task_id to the dictionary for convenience
+                    task_info["id"] = int(task_id)
+                    return task_info
+
+            return None  # Label not found
+
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError, json.JSONDecodeError):
+            logger.warning(
+                f"Failed to query Pueue for label '{label}'. Assuming task not found."
+            )
+            return None
 
     def get_workflow_status(
         self, task_id: int

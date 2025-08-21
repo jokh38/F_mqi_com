@@ -42,7 +42,9 @@ class TestWorkflowSubmitter:
                 MagicMock(returncode=0, stdout="New task added (id: 123).", stderr=""),
             ]
 
-            task_id = submitter.submit_workflow(case_path, pueue_group="test_group")
+            task_id = submitter.submit_workflow(
+                case_id=1, case_path=case_path, pueue_group="test_group"
+            )
 
             assert task_id == 123
             assert mock_run.call_count == 2
@@ -58,7 +60,7 @@ class TestWorkflowSubmitter:
             )
 
             with pytest.raises(WorkflowSubmissionError, match="Failed to copy case"):
-                submitter.submit_workflow(case_path)
+                submitter.submit_workflow(case_id=1, case_path=case_path)
             mock_run.assert_called_once()
 
     def test_submit_workflow_ssh_failure(self, mock_config):
@@ -73,7 +75,7 @@ class TestWorkflowSubmitter:
             ]
 
             with pytest.raises(WorkflowSubmissionError, match="Failed to submit job"):
-                submitter.submit_workflow(case_path)
+                submitter.submit_workflow(case_id=1, case_path=case_path)
             assert mock_run.call_count == 2
 
 
