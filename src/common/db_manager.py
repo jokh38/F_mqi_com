@@ -163,15 +163,23 @@ class DatabaseManager:
         self.conn.commit()
 
     def update_case_completion(self, case_id: int, status: str) -> None:
-        """Marks a case as 'completed' or 'failed' and sets progress to 100."""
+        """
+        Marks a case as 'completed' or 'failed', sets progress to 100,
+        and clears resource association fields.
+        """
         # Get current time in KST and format as ISO 8601 string
         completion_time = datetime.now(KST).isoformat()
         self.cursor.execute(
             """
             UPDATE cases
-            SET status = ?, progress = 100, completed_at = ?, status_updated_at = ?
+            SET status = ?,
+                progress = 100,
+                completed_at = ?,
+                status_updated_at = ?,
+                pueue_group = NULL,
+                pueue_task_id = NULL
             WHERE case_id = ?
-        """,
+            """,
             (status, completion_time, completion_time, case_id),
         )
         self.conn.commit()
