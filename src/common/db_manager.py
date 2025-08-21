@@ -1,4 +1,6 @@
 import sqlite3
+import os
+from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, List
 
@@ -37,6 +39,10 @@ class DatabaseManager:
             self.db_path = config["database"]["path"]
         else:
             raise ValueError("Either db_path or config must be provided.")
+
+        # Ensure the directory for the database file exists.
+        db_dir = Path(self.db_path).parent
+        os.makedirs(db_dir, exist_ok=True)
 
         self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
         # Use Row factory to allow accessing columns by name
