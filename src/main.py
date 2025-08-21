@@ -82,10 +82,6 @@ def main() -> None:
             db_manager.ensure_gpu_resource_exists(group)
             logging.info(f"Ensured GPU resource for group '{group}' exists.")
 
-        # Use the first group in the list as the default for new cases
-        default_pueue_group = pueue_groups[0]
-        logging.info(f"Default Pueue group for new cases is set to '{default_pueue_group}'.")
-
         # 5. Continue Component Initialization
         watch_path = config.get("scanner", {}).get("watch_path", "new_cases")
         sleep_interval = config.get("main_loop", {}).get("sleep_interval_seconds", 10)
@@ -93,9 +89,7 @@ def main() -> None:
         workflow_submitter = WorkflowSubmitter(config=config)
         logging.info("WorkflowSubmitter initialized.")
 
-        case_scanner = CaseScanner(
-            watch_path=watch_path, db_manager=db_manager, pueue_group=default_pueue_group
-        )
+        case_scanner = CaseScanner(watch_path=watch_path, db_manager=db_manager)
         logging.info("CaseScanner initialized.")
 
         # 4. Start Background Services
@@ -138,33 +132,39 @@ def main() -> None:
                             )
                     # If status is 'running', do nothing and check again next cycle.
 
-                # --- Part 2: Process new SUBMITTED cases ---
+                # --- Part 2: Process new SUBMITTED cases with dynamic resource allocation ---
                 submitted_cases = db_manager.get_cases_by_status("submitted")
-                if submitted_cases:
-                    # Check for available resources before iterating through all cases
+                if not submitted_cases:
+                    # No new cases, so we can skip the resource check.
+                    pass
+                else:
                     logging.info(f"Found {len(submitted_cases)} submitted case(s) to process.")
-                    for case in submitted_cases:
-                        case_id = case["case_id"]
-                        case_path = case["case_path"]
-                        pueue_group = case["pueue_group"]
 
-                        # Try to lock a GPU resource for this case's group
-                        if not db_manager.find_and_lock_available_gpu(pueue_group, case_id):
-                            logging.info(f"No available GPU for group '{pueue_group}'. Will retry case {case_id} later.")
-                            continue  # Skip to the next case
+                    # Try to lock a GPU for the first available case
+                    case_to_process = submitted_cases[0]
+                    case_id = case_to_process["case_id"]
+                    case_path = case_to_process["case_path"]
 
+                    # Try to lock ANY available GPU resource for this case
+                    locked_pueue_group = db_manager.find_and_lock_any_available_gpu(case_id)
+
+                    if not locked_pueue_group:
+                        logging.info("No available GPU resource at the moment. Will retry later.")
+                    else:
                         logging.info(
-                            f"GPU resource locked for group '{pueue_group}'. Processing case ID: {case_id}"
+                            f"GPU resource '{locked_pueue_group}' locked for case ID: {case_id}"
                         )
-
                         try:
+                            # Assign the locked group to the case
+                            db_manager.update_case_pueue_group(case_id, locked_pueue_group)
+
                             # Mark as 'submitting' to prevent re-processing
                             db_manager.update_case_status(
                                 case_id, status="submitting", progress=10
                             )
 
                             pueue_task_id = workflow_submitter.submit_workflow(
-                                case_path=case_path, pueue_group=pueue_group
+                                case_path=case_path, pueue_group=locked_pueue_group
                             )
 
                             if pueue_task_id is not None:
@@ -173,7 +173,7 @@ def main() -> None:
                                     case_id, status="running", progress=30
                                 )
                                 logging.info(
-                                    f"Case ID: {case_id} successfully submitted to workflow as Task ID: {pueue_task_id}."
+                                    f"Case ID: {case_id} successfully submitted to '{locked_pueue_group}' as Task ID: {pueue_task_id}."
                                 )
                             else:
                                 # Handle case where submission succeeded but ID parsing failed

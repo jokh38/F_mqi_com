@@ -27,11 +27,9 @@ class StableDirectoryEventHandler(FileSystemEventHandler):
     def __init__(
         self,
         db_manager: DatabaseManager,
-        pueue_group: str,
         stability_delay: float = STABILITY_DELAY_SECONDS,
     ):
         self.db_manager = db_manager
-        self.pueue_group = pueue_group
         self.stability_delay = stability_delay
         self.timers: Dict[str, threading.Timer] = {}
         self.lock = threading.Lock()
@@ -42,13 +40,12 @@ class StableDirectoryEventHandler(FileSystemEventHandler):
             # Remove the timer from the tracking dictionary
             self.timers.pop(path_str, None)
 
-        logger.info(
-            f"Directory '{path_str}' is stable. Adding to database."
-        )
+        logger.info(f"Directory '{path_str}' is stable. Adding to database.")
         try:
             # Check if the case already exists to prevent duplicates from multiple events
             if not self.db_manager.get_case_by_path(path_str):
-                self.db_manager.add_case(path_str, self.pueue_group)
+                # The pueue_group is no longer assigned here.
+                self.db_manager.add_case(path_str)
                 logger.info(f"Successfully added case '{path_str}' to the database.")
             else:
                 logger.warning(
@@ -102,15 +99,10 @@ class StableDirectoryEventHandler(FileSystemEventHandler):
 class CaseScanner:
     """Monitors a directory for new, stable cases."""
 
-    def __init__(
-        self, watch_path: str, db_manager: DatabaseManager, pueue_group: str
-    ) -> None:
+    def __init__(self, watch_path: str, db_manager: DatabaseManager) -> None:
         self.watch_path = watch_path
         self.db_manager = db_manager
-        self.pueue_group = pueue_group
-        self.event_handler = StableDirectoryEventHandler(
-            db_manager=self.db_manager, pueue_group=self.pueue_group
-        )
+        self.event_handler = StableDirectoryEventHandler(db_manager=self.db_manager)
         # We need to watch recursively to detect file changes inside new directories
         self.observer = Observer()
         self.observer.schedule(self.event_handler, self.watch_path, recursive=True)

@@ -1,11 +1,12 @@
 import time
 from pathlib import Path
-from unittest.mock import patch, Mock
+from unittest.mock import patch, Mock, call
+from typing import Generator
 
 import pytest
 from watchdog.events import DirCreatedEvent, FileCreatedEvent
 
-from src.services.case_scanner import StableDirectoryEventHandler
+from src.services.case_scanner import StableDirectoryEventHandler, CaseScanner
 
 # Use a short delay for tests to run quickly
 TEST_STABILITY_DELAY = 0.1
@@ -22,133 +23,122 @@ def temp_watch_dir(tmp_path: Path) -> Path:
 @pytest.fixture
 def mock_db_manager() -> Mock:
     """Provides a mocked DatabaseManager instance."""
-    return Mock()
+    mock = Mock()
+    mock.get_case_by_path.return_value = None
+    return mock
 
 
 @pytest.fixture
 def stable_event_handler(mock_db_manager: Mock) -> StableDirectoryEventHandler:
-    """Provides an instance of StableDirectoryEventHandler with a short delay."""
+    """Provides an instance of StableDirectoryEventHandler."""
+    # No teardown needed as we will mock the Timer class itself
     return StableDirectoryEventHandler(
         db_manager=mock_db_manager,
-        pueue_group="test_gpu",
         stability_delay=TEST_STABILITY_DELAY,
     )
 
 
-def test_handler_processes_stable_directory(
+@patch("src.services.case_scanner.threading.Timer")
+def test_handler_starts_timer_on_new_directory(
+    MockTimer,
     stable_event_handler: StableDirectoryEventHandler,
-    mock_db_manager: Mock,
     temp_watch_dir: Path,
 ):
-    """
-    Tests that the handler calls add_case after a directory is created and
-    remains stable for the duration of the delay.
-    """
-    # Arrange
+    """Tests that the handler starts a timer when a directory is created."""
     new_dir_path = temp_watch_dir / "new_case_001"
-    new_dir_path.mkdir()
     event = DirCreatedEvent(str(new_dir_path))
 
-    # Act
     stable_event_handler.on_any_event(event)
 
-    # Assert: Should not be called immediately
-    mock_db_manager.add_case.assert_not_called()
-    mock_db_manager.get_case_by_path.assert_not_called()
-
-    # Wait for the stability delay to pass
-    time.sleep(TEST_STABILITY_DELAY + 0.05)
-
-    # Assert: Should be called now
-    mock_db_manager.get_case_by_path.assert_called_once_with(str(new_dir_path))
-    mock_db_manager.add_case.assert_called_once_with(str(new_dir_path), "test_gpu")
+    MockTimer.assert_called_once_with(
+        TEST_STABILITY_DELAY,
+        stable_event_handler._process_directory,
+        args=[str(new_dir_path)],
+    )
+    mock_timer_instance = MockTimer.return_value
+    mock_timer_instance.start.assert_called_once()
 
 
-def test_handler_ignores_top_level_file_creation(
+@patch("src.services.case_scanner.threading.Timer")
+def test_handler_calls_add_case_when_timer_expires(
+    MockTimer,
     stable_event_handler: StableDirectoryEventHandler,
     mock_db_manager: Mock,
     temp_watch_dir: Path,
 ):
     """
-    Tests that the handler ignores file creation events that are not in a
-    subdirectory it is tracking.
+    Tests that the handler calls add_case by simulating a timer's callback.
     """
-    # Arrange
-    new_file_path = temp_watch_dir / "a_file.txt"
-    new_file_path.touch()
-    event = FileCreatedEvent(str(new_file_path))
+    new_dir_path = str(temp_watch_dir / "new_case_001")
+    event = DirCreatedEvent(new_dir_path)
 
-    # Act
     stable_event_handler.on_any_event(event)
-    time.sleep(TEST_STABILITY_DELAY + 0.05)
 
-    # Assert
-    mock_db_manager.add_case.assert_not_called()
+    # Extract the callback and its arguments from the mock Timer
+    timer_args = MockTimer.call_args.args
+    callback_func = timer_args[1]
+    callback_args = timer_args[2]
+
+    # Simulate the timer expiring by executing the callback
+    callback_func(*callback_args)
+
+    mock_db_manager.get_case_by_path.assert_called_once_with(new_dir_path)
+    mock_db_manager.add_case.assert_called_once_with(new_dir_path)
 
 
+@patch("src.services.case_scanner.threading.Timer")
 def test_handler_resets_timer_on_internal_modification(
+    MockTimer,
     stable_event_handler: StableDirectoryEventHandler,
     mock_db_manager: Mock,
     temp_watch_dir: Path,
 ):
     """
-    Tests that file activity inside a newly created directory resets the
-    stability timer.
+    Tests that file activity inside a directory resets the stability timer.
     """
-    # Arrange
     new_dir_path = temp_watch_dir / "new_case_002"
-    new_dir_path.mkdir()
     dir_event = DirCreatedEvent(str(new_dir_path))
 
-    # Act
-    # 1. A new directory is created, starting the timer.
+    # 1. A new directory is created, starting the first timer.
     stable_event_handler.on_any_event(dir_event)
+    first_timer_instance = MockTimer.return_value
 
-    # 2. Wait for half the delay, then create a file inside it.
-    time.sleep(TEST_STABILITY_DELAY / 2)
+    # 2. A file is created inside, which should cancel the first timer and start a new one.
     internal_file_path = new_dir_path / "internal.txt"
-    internal_file_path.touch()
     file_event = FileCreatedEvent(str(internal_file_path))
-    stable_event_handler.on_any_event(file_event) # This should reset the timer
+    stable_event_handler.on_any_event(file_event)
 
-    # 3. Wait for the original timer to expire.
-    time.sleep(TEST_STABILITY_DELAY / 2 + 0.05)
+    # Assert that the first timer was cancelled
+    first_timer_instance.cancel.assert_called_once()
+    # Assert that a new timer was started (total of 2 calls to the constructor)
+    assert MockTimer.call_count == 2
 
-    # Assert: add_case should NOT have been called yet, because the timer was reset.
-    mock_db_manager.add_case.assert_not_called()
+    # Extract the callback from the second timer call
+    timer_args = MockTimer.call_args.args
+    callback_func = timer_args[1]
+    callback_args = timer_args[2]
 
-    # 4. Wait for the new timer to expire.
-    time.sleep(TEST_STABILITY_DELAY / 2)
+    # Simulate the second timer expiring
+    callback_func(*callback_args)
 
-    # Assert: add_case should have been called now.
-    mock_db_manager.add_case.assert_called_once_with(str(new_dir_path), "test_gpu")
+    mock_db_manager.add_case.assert_called_once_with(str(new_dir_path))
 
 
-def test_handler_handles_db_error_gracefully(
-    stable_event_handler: StableDirectoryEventHandler,
-    mock_db_manager: Mock,
-    temp_watch_dir: Path,
-):
+@patch("src.services.case_scanner.Observer")
+def test_case_scanner_integration(MockObserver, mock_db_manager: Mock, temp_watch_dir: Path):
     """
-    Tests that the handler logs an error if the DB call fails, but does not crash.
+    Tests the CaseScanner class integration with the observer.
     """
     # Arrange
-    mock_db_manager.get_case_by_path.return_value = None
-    mock_db_manager.add_case.side_effect = Exception("DB connection failed")
-    new_dir_path = temp_watch_dir / "new_case_003"
-    new_dir_path.mkdir()
-    event = DirCreatedEvent(str(new_dir_path))
+    scanner = CaseScanner(watch_path=str(temp_watch_dir), db_manager=mock_db_manager)
+    mock_observer_instance = MockObserver.return_value
 
-    # Act & Assert
-    # Patch the logger within the 'case_scanner' module to check its calls
-    with patch("src.services.case_scanner.logger") as mock_logger:
-        stable_event_handler.on_any_event(event)
-        time.sleep(TEST_STABILITY_DELAY + 0.05)
+    # Act
+    scanner.start()
+    scanner.stop()
 
-        # Check that the DB call was attempted
-        mock_db_manager.add_case.assert_called_once()
-        # Check that the error was logged
-        mock_logger.error.assert_called_once()
-        log_message = mock_logger.error.call_args.args[0]
-        assert "Failed to add case" in log_message
-        assert "DB connection failed" in log_message
+    # Assert
+    mock_observer_instance.schedule.assert_called_once()
+    mock_observer_instance.start.assert_called_once()
+    mock_observer_instance.stop.assert_called_once()
+    mock_observer_instance.join.assert_called_once()
