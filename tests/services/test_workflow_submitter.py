@@ -1,7 +1,11 @@
 import subprocess
 from unittest.mock import patch, MagicMock, call
 import pytest
-from src.services.workflow_submitter import WorkflowSubmitter
+import shlex
+from src.services.workflow_submitter import (
+    WorkflowSubmitter,
+    WorkflowSubmissionError,
+)
 
 
 @pytest.fixture
@@ -12,6 +16,7 @@ def mock_config():
             "host": "test_host",
             "user": "test_user",
             "remote_base_dir": "/remote/base/dir",
+            "remote_command": "python sim.py",
         }
     }
 
@@ -27,76 +32,86 @@ class TestWorkflowSubmitter:
     def test_submit_workflow_success(self, mock_config):
         """Test the successful submission of a workflow."""
         submitter = WorkflowSubmitter(config=mock_config)
-
         case_path = "/local/path/case_001"
 
-        with patch("subprocess.run") as mock_subprocess:
-            mock_subprocess.return_value = MagicMock(
-                returncode=0, stdout="Success", stderr=""
-            )
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="Success", stderr="")
 
             submitter.submit_workflow(case_path, pueue_group="test_group")
 
-            # Define expected commands
-            remote_case_path = "/remote/base/dir/case_001"
+            # Define expected commands based on the security-hardened implementation
+            remote_path = "/remote/base/dir/case_001"
             scp_command = [
                 "scp",
                 "-r",
                 case_path,
                 "test_user@test_host:/remote/base/dir",
             ]
-
-            # This is the updated command the test should expect.
-            remote_command = (
-                f"cd {remote_case_path} && python interpreter.py && python moquisim.py"
-            )
-            pueue_command_str = f"pueue add --group test_group -- '{remote_command}'"
-            ssh_command = ["ssh", "test_user@test_host", pueue_command_str]
+            remote_command = f"cd {shlex.quote(remote_path)} && python sim.py"
+            ssh_command = [
+                "ssh",
+                "test_user@test_host",
+                "pueue",
+                "add",
+                "--group",
+                "test_group",
+                "--",
+                remote_command,
+            ]
 
             # Check if subprocess.run was called correctly
             calls = [
-                call(scp_command, check=True, capture_output=True, text=True),
-                call(ssh_command, check=True, capture_output=True, text=True),
+                call(
+                    scp_command,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=300,
+                ),
+                call(
+                    ssh_command,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                ),
             ]
-            mock_subprocess.assert_has_calls(calls, any_order=False)
+            mock_run.assert_has_calls(calls, any_order=False)
 
     def test_submit_workflow_scp_failure(self, mock_config):
         """Test that workflow submission fails if scp command fails."""
         submitter = WorkflowSubmitter(config=mock_config)
-
         case_path = "/local/path/case_001"
 
-        with patch("subprocess.run") as mock_subprocess:
-            # Mock a failed scp command by raising CalledProcessError
-            mock_subprocess.side_effect = subprocess.CalledProcessError(
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = subprocess.CalledProcessError(
                 returncode=1, cmd="scp", stderr="SCP failed"
             )
 
-            with pytest.raises(Exception) as excinfo:
+            with pytest.raises(WorkflowSubmissionError) as excinfo:
                 submitter.submit_workflow(case_path)
 
             assert "Failed to copy case" in str(excinfo.value)
             assert "SCP failed" in str(excinfo.value)
-            mock_subprocess.assert_called_once()
+            mock_run.assert_called_once()
 
     def test_submit_workflow_ssh_failure(self, mock_config):
         """Test that workflow submission fails if ssh command fails."""
         submitter = WorkflowSubmitter(config=mock_config)
-
         case_path = "/local/path/case_001"
 
-        with patch("subprocess.run") as mock_subprocess:
+        with patch("subprocess.run") as mock_run:
             # Mock a successful scp followed by a failed ssh
-            mock_subprocess.side_effect = [
+            mock_run.side_effect = [
                 MagicMock(returncode=0),  # Successful scp
                 subprocess.CalledProcessError(
                     returncode=1, cmd="ssh", stderr="SSH failed"
                 ),
             ]
 
-            with pytest.raises(Exception) as excinfo:
+            with pytest.raises(WorkflowSubmissionError) as excinfo:
                 submitter.submit_workflow(case_path)
 
             assert "Failed to submit job" in str(excinfo.value)
             assert "SSH failed" in str(excinfo.value)
-            assert mock_subprocess.call_count == 2
+            assert mock_run.call_count == 2

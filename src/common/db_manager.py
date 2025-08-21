@@ -1,6 +1,6 @@
 import sqlite3
 from datetime import datetime, timezone, timedelta
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 
 # Define Korea Standard Time (KST) as UTC+9
@@ -16,7 +16,7 @@ class DatabaseManager:
         self,
         db_path: Optional[str] = None,
         config: Optional[Dict[str, Any]] = None,
-    ):
+    ) -> None:
         """
         Initializes the DatabaseManager.
 
@@ -43,7 +43,7 @@ class DatabaseManager:
         self.conn.row_factory = sqlite3.Row
         self.cursor = self.conn.cursor()
 
-    def _create_tables(self):
+    def _create_tables(self) -> None:
         """
         Creates the necessary tables if they don't exist.
         This is defined in the project specification.
@@ -76,7 +76,7 @@ class DatabaseManager:
         )
         self.conn.commit()
 
-    def init_db(self):
+    def init_db(self) -> None:
         """Public method to initialize the database."""
         self._create_tables()
 
@@ -111,13 +111,13 @@ class DatabaseManager:
         row = self.cursor.fetchone()
         return dict(row) if row else None
 
-    def get_cases_by_status(self, status: str) -> list[Dict[str, Any]]:
+    def get_cases_by_status(self, status: str) -> List[Dict[str, Any]]:
         """Retrieves all cases with a given status."""
         self.cursor.execute("SELECT * FROM cases WHERE status = ?", (status,))
         rows = self.cursor.fetchall()
         return [dict(row) for row in rows]
 
-    def update_case_status(self, case_id: int, status: str, progress: int):
+    def update_case_status(self, case_id: int, status: str, progress: int) -> None:
         """Updates the status and progress of a case."""
         self.cursor.execute(
             """
@@ -129,7 +129,7 @@ class DatabaseManager:
         )
         self.conn.commit()
 
-    def update_case_completion(self, case_id: int, status: str):
+    def update_case_completion(self, case_id: int, status: str) -> None:
         """Marks a case as 'completed' or 'failed' and sets progress to 100."""
         # Get current time in KST and format as ISO 8601 string
         completion_time = datetime.now(KST).isoformat()
@@ -143,7 +143,7 @@ class DatabaseManager:
         )
         self.conn.commit()
 
-    def add_gpu_resource(self, pueue_group: str, status: str = "available"):
+    def add_gpu_resource(self, pueue_group: str, status: str = "available") -> None:
         """Adds a new GPU resource to the database."""
         self.cursor.execute(
             """
@@ -164,7 +164,7 @@ class DatabaseManager:
 
     def update_gpu_status(
         self, pueue_group: str, status: str, case_id: Optional[int] = None
-    ):
+    ) -> None:
         """Updates the status and assigned case of a GPU resource."""
         self.cursor.execute(
             """
@@ -176,7 +176,7 @@ class DatabaseManager:
         )
         self.conn.commit()
 
-    def close(self):
+    def close(self) -> None:
         """Closes the database connection."""
         if self.conn:
             self.conn.close()

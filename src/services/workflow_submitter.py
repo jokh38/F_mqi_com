@@ -1,6 +1,13 @@
 import subprocess
+import shlex
 from pathlib import Path
 from typing import Dict, Any
+
+
+class WorkflowSubmissionError(Exception):
+    """Custom exception for errors during workflow submission."""
+
+    pass
 
 
 class WorkflowSubmitter:
@@ -11,7 +18,7 @@ class WorkflowSubmitter:
     submitting simulation jobs to the Pueue daemon on the remote server.
     """
 
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: Dict[str, Any]) -> None:
         """
         Initializes the WorkflowSubmitter with HPC configuration.
 
@@ -34,10 +41,12 @@ class WorkflowSubmitter:
             pueue_group: The Pueue group to assign the job to.
 
         Raises:
-            subprocess.CalledProcessError: If the scp or ssh command fails.
+            WorkflowSubmissionError: If the scp or ssh command fails.
         """
         case_name = Path(case_path).name
-        remote_path = f"{self.hpc_config['remote_base_dir']}/{case_name}"
+        # Sanitize case_name to prevent directory traversal
+        safe_case_name = Path(case_name).name
+        remote_path = f"{self.hpc_config['remote_base_dir']}/{safe_case_name}"
         user = self.hpc_config["user"]
         host = self.hpc_config["host"]
 
@@ -49,29 +58,46 @@ class WorkflowSubmitter:
             f"{user}@{host}:{self.hpc_config['remote_base_dir']}",
         ]
         try:
-            subprocess.run(scp_command, check=True, capture_output=True, text=True)
+            subprocess.run(
+                scp_command, check=True, capture_output=True, text=True, timeout=300
+            )
         except subprocess.CalledProcessError as e:
             error_message = (
-                f"Failed to copy case '{case_name}' to HPC. SCP stderr: {e.stderr}"
+                f"Failed to copy case '{safe_case_name}' to HPC. SCP stderr: {e.stderr}"
             )
-            raise Exception(error_message) from e
+            raise WorkflowSubmissionError(error_message) from e
+        except subprocess.TimeoutExpired as e:
+            error_message = f"Timeout during scp of case '{safe_case_name}'."
+            raise WorkflowSubmissionError(error_message) from e
 
         # 2. Submit job to Pueue via ssh
-        # The command to be executed on the remote machine.
-        # It runs the two simulation scripts in sequence.
-        remote_command = (
-            f"cd {remote_path} && python interpreter.py && python moquisim.py"
+        base_remote_command = self.hpc_config.get(
+            "remote_command", "python interpreter.py && python moquisim.py"
         )
+        remote_command = f"cd {shlex.quote(remote_path)} && {base_remote_command}"
 
-        # The pueue command that wraps the remote command.
-        pueue_command_str = f"pueue add --group {pueue_group} -- '{remote_command}'"
-
-        ssh_command = ["ssh", f"{user}@{host}", pueue_command_str]
+        ssh_command = [
+            "ssh",
+            f"{user}@{host}",
+            "pueue",
+            "add",
+            "--group",
+            pueue_group,
+            "--",
+            remote_command,
+        ]
         try:
-            subprocess.run(ssh_command, check=True, capture_output=True, text=True)
+            subprocess.run(
+                ssh_command, check=True, capture_output=True, text=True, timeout=60
+            )
         except subprocess.CalledProcessError as e:
             error_message = (
-                f"Failed to submit job for case '{case_name}' to Pueue. "
+                f"Failed to submit job for case '{safe_case_name}' to Pueue. "
                 f"SSH stderr: {e.stderr}"
             )
-            raise Exception(error_message) from e
+            raise WorkflowSubmissionError(error_message) from e
+        except subprocess.TimeoutExpired as e:
+            error_message = (
+                f"Timeout during ssh submission for case '{safe_case_name}'."
+            )
+            raise WorkflowSubmissionError(error_message) from e
