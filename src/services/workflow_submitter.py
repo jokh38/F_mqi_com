@@ -234,21 +234,46 @@ class WorkflowSubmitter:
             else:  # 'Running', 'Queued', 'Paused', etc.
                 return "running"
 
-        except subprocess.TimeoutExpired:
-            logger.warning(
-                f"Timeout while checking status for task {task_id}. HPC is unreachable."
-            )
-            return "unreachable"
-        except subprocess.CalledProcessError as e:
-            logger.warning(
-                f"SSH command failed for task {task_id}. Stderr: {e.stderr}. HPC is unreachable."
-            )
-            return "unreachable"
-        except (json.JSONDecodeError, KeyError) as e:
+        except (
+            subprocess.TimeoutExpired,
+            subprocess.CalledProcessError,
+            json.JSONDecodeError,
+            KeyError,
+        ) as e:
             logger.error(
-                f"Failed to parse Pueue status for task {task_id}. "
-                f"Output may be corrupted or format may have changed. Error: {e}. "
-                "Treating as unreachable and will retry.",
+                f"Failed to get status for task {task_id} from HPC. "
+                f"It might be unreachable or the response was invalid. Error: {e}",
                 exc_info=True,
             )
             return "unreachable"
+
+    def kill_workflow(self, task_id: int) -> bool:
+        """
+        Attempts to kill a specific workflow task in Pueue on the remote HPC.
+
+        Args:
+            task_id: The ID of the task to kill.
+
+        Returns:
+            True if the kill command was sent successfully, False otherwise.
+        """
+        ssh_command = [
+            self.ssh_cmd,
+            f"{self.user}@{self.host}",
+            self.pueue_cmd,
+            "kill",
+            str(task_id),
+        ]
+        try:
+            logger.info(f"Attempting to kill remote task {task_id} on HPC...")
+            subprocess.run(
+                ssh_command, check=True, capture_output=True, text=True, timeout=60
+            )
+            logger.info(f"Successfully sent kill command for task {task_id}.")
+            return True
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
+            stderr = e.stderr if hasattr(e, 'stderr') else 'Timeout'
+            logger.error(
+                f"Failed to kill task {task_id} on HPC. It may have already finished or the HPC is unreachable. Stderr: {stderr}"
+            )
+            return False

@@ -189,14 +189,25 @@ def main(config: Dict[str, Any]) -> None:
                         # First, check for a timeout. This is independent of HPC reachability.
                         if datetime.now(KST) - status_updated_at > timeout_delta:
                             logging.critical(
-                                f"Case ID {case_id} has been in 'running' state for more than "
-                                f"{running_case_timeout_hours} hours. Marking as failed due to timeout."
+                                f"Case ID {case_id} (Task {task_id}) has been in 'running' state for more than "
+                                f"{running_case_timeout_hours} hours. Attempting to kill remote task and marking as failed."
                             )
+                            # Attempt to kill the remote job to prevent resource leaks on the HPC
+                            kill_successful = workflow_submitter.kill_workflow(task_id)
+                            if kill_successful:
+                                logging.info(
+                                    f"Successfully sent kill command for timed-out Task ID: {task_id}."
+                                )
+                            else:
+                                logging.warning(
+                                    f"Failed to send kill command for timed-out Task ID: {task_id}. "
+                                    "The task may have already completed or the HPC is unreachable."
+                                )
+
                             db_manager.update_case_completion(
                                 case_id, status="failed"
                             )
                             db_manager.release_gpu_resource(case_id)
-                            # Consider attempting to kill the remote job here in the future.
                             logging.info(
                                 f"Released GPU resource for timed-out case ID: {case_id}."
                             )
