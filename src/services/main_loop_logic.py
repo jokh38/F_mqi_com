@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Optional
 
 # Note: To avoid circular imports, type hint the manager classes
 # instead of importing them directly.
@@ -235,6 +235,89 @@ def process_new_submitted_cases(
                 logging.info(
                     f"Case {case_id} submitted to '{group_name}' as "
                     f"Task ID: {pueue_task_id}."
+                )
+            else:
+                raise ValueError("Failed to parse Pueue Task ID from submission.")
+
+        except Exception as e:
+            logging.error(
+                f"Failed to process case {case_id}. Error: {e}", exc_info=True
+            )
+            db_manager.update_case_completion(case_id, status="failed")
+            db_manager.release_gpu_resource(case_id)
+            logging.info(f"Released GPU for failed case {case_id}.")
+
+
+def process_new_submitted_cases_with_optimization(
+    db_manager: DatabaseManager, 
+    workflow_submitter: WorkflowSubmitter,
+    gpu_manager: Optional[Any] = None
+) -> None:
+    """
+    Enhanced version of process_new_submitted_cases that uses optimal GPU assignment.
+    
+    Processes new cases with 'submitted' status by assigning them to optimal
+    GPU resources using the DynamicGpuManager when available, falling back
+    to the original algorithm when not available.
+    
+    Args:
+        db_manager: Database manager instance
+        workflow_submitter: Workflow submitter instance  
+        gpu_manager: Optional DynamicGpuManager instance for optimal assignment
+    """
+    submitted_cases = db_manager.get_cases_by_status("submitted")
+    if not submitted_cases:
+        return
+
+    logging.info(f"Found {len(submitted_cases)} submitted case(s).")
+    for case_to_process in submitted_cases:
+        case_id = case_to_process["case_id"]
+        
+        # Try optimal GPU assignment first if gpu_manager is available
+        group_name = None
+        if gpu_manager:
+            try:
+                optimal_group = gpu_manager.get_optimal_gpu_assignment()
+                if optimal_group:
+                    # Lock the optimal resource
+                    locked_resource = db_manager.find_and_lock_any_available_gpu(case_id)
+                    # Check if we got the optimal one, or use what we got
+                    if locked_resource == optimal_group:
+                        group_name = optimal_group
+                        logging.info(f"Optimal GPU resource '{group_name}' assigned to case {case_id}")
+                    elif locked_resource:
+                        group_name = locked_resource if isinstance(locked_resource, str) else locked_resource["pueue_group"]
+                        logging.info(f"GPU resource '{group_name}' assigned to case {case_id} (optimal: {optimal_group})")
+            except Exception as e:
+                logging.warning(f"Optimal GPU assignment failed: {e}. Using fallback allocation.")
+        
+        # Fallback to original allocation if optimal assignment didn't work
+        if not group_name:
+            locked_pueue_group = db_manager.get_gpu_resource_by_case_id(case_id) or db_manager.find_and_lock_any_available_gpu(case_id)
+            
+            if not locked_pueue_group:
+                logging.info("No available GPUs. Will retry next cycle.")
+                break  # No need to check other cases if no GPUs are free
+
+            group_name = locked_pueue_group if isinstance(locked_pueue_group, str) else locked_pueue_group["pueue_group"]
+            logging.info(f"GPU resource '{group_name}' locked for case ID: {case_id}")
+
+        # Process the case with the assigned GPU
+        try:
+            db_manager.update_case_pueue_group(case_id, group_name)
+            db_manager.update_case_status(case_id, status="submitting", progress=10)
+
+            pueue_task_id = workflow_submitter.submit_workflow(
+                case_id=case_id,
+                case_path=case_to_process["case_path"],
+                pueue_group=group_name,
+            )
+
+            if pueue_task_id is not None:
+                db_manager.update_case_pueue_task_id(case_id, pueue_task_id)
+                db_manager.update_case_status(case_id, status="running", progress=30)
+                logging.info(
+                    f"Case {case_id} submitted to '{group_name}' as Task ID: {pueue_task_id}."
                 )
             else:
                 raise ValueError("Failed to parse Pueue Task ID from submission.")

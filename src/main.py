@@ -10,11 +10,13 @@ from typing import Optional, Dict, Any
 from src.common.db_manager import DatabaseManager
 from src.services.case_scanner import CaseScanner
 from src.services.workflow_submitter import WorkflowSubmitter
+from src.services.dynamic_gpu_manager import DynamicGpuManager, GpuDetectionError
 from src.services.main_loop_logic import (
     recover_stuck_submitting_cases,
     manage_running_cases,
     manage_zombie_resources,
     process_new_submitted_cases,
+    process_new_submitted_cases_with_optimization,
 )
 
 # Define the path to the configuration file
@@ -73,15 +75,33 @@ def main(config: Dict[str, Any]) -> None:
         db_manager.init_db()
         logging.info("DatabaseManager initialized.")
 
-        # 4. Initialize GPU Resources from Config
-        pueue_config = config.get("pueue", {})
-        pueue_groups = pueue_config.get("groups", [])
-        if not pueue_groups:
-            raise ValueError("Config error: 'pueue.groups' must be a non-empty list.")
+        # 4. Initialize GPU Resources (Dynamic Detection + Config Fallback)
+        gpu_manager = None  # Will be set if dynamic detection succeeds
+        try:
+            # Try dynamic GPU detection first
+            gpu_manager = DynamicGpuManager(config, db_manager)
+            gpu_info = gpu_manager.refresh_gpu_resources()
+            detected_groups = gpu_info["detected_groups"]
+            utilization = gpu_info["utilization"]
+            
+            logging.info(f"Dynamic GPU detection successful: {len(detected_groups)} groups detected")
+            for group_name, stats in utilization.items():
+                logging.info(f"  {group_name}: {stats['running']} running, {stats['queued']} queued")
+                
+        except GpuDetectionError as e:
+            # Fallback to static configuration
+            logging.warning(f"Dynamic GPU detection failed: {e}")
+            logging.info("Falling back to static GPU configuration...")
+            gpu_manager = None  # Disable dynamic GPU management
+            
+            pueue_config = config.get("pueue", {})
+            pueue_groups = pueue_config.get("groups", [])
+            if not pueue_groups:
+                raise ValueError("Config error: Dynamic GPU detection failed and 'pueue.groups' is empty.")
 
-        for group in pueue_groups:
-            db_manager.ensure_gpu_resource_exists(group)
-            logging.info(f"Ensured GPU resource for group '{group}' exists.")
+            for group in pueue_groups:
+                db_manager.ensure_gpu_resource_exists(group)
+                logging.info(f"Ensured static GPU resource for group '{group}' exists.")
 
         # 5. Continue Component Initialization
         main_loop_config = config.get("main_loop", {})
@@ -116,7 +136,8 @@ def main(config: Dict[str, Any]) -> None:
                 recover_stuck_submitting_cases(db_manager, workflow_submitter)
                 manage_running_cases(db_manager, workflow_submitter, timeout_delta, KST)
                 manage_zombie_resources(db_manager, workflow_submitter)
-                process_new_submitted_cases(db_manager, workflow_submitter)
+                # Use optimized processing if dynamic GPU management is available
+                process_new_submitted_cases_with_optimization(db_manager, workflow_submitter, gpu_manager)
 
             except Exception as e:
                 # Catch exceptions in the main loop itself to prevent crashing
