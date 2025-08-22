@@ -77,14 +77,18 @@ def test_main_loop_handles_running_case_success(mock_dependencies):
     mocks = mock_dependencies
     now = datetime.now(timezone.utc).isoformat()
     running_case = {"case_id": 1, "pueue_task_id": 101, "status_updated_at": now}
-    # Loop 1: No stuck, one running, no submitted. Loop 2: Clean exit.
+    # In the refactored loop, we expect these calls in order:
+    # 1. get_cases_by_status("submitting") -> from recover_stuck_submitting_cases
+    # 2. get_cases_by_status("running")    -> from manage_running_cases
+    # 3. get_resources_by_status("zombie") -> from manage_zombie_resources
+    # 4. get_cases_by_status("submitted")  -> from process_new_submitted_cases
     mocks["db"].get_cases_by_status.side_effect = [
-        [],  # For stuck cases
-        [running_case],  # For running cases timeout check
-        [running_case],  # For running cases status check
-        [],  # For submitted cases
-        SystemExit,
+        [],  # For 'submitting'
+        [running_case],  # For 'running'
+        [],  # For 'submitted'
+        SystemExit,  # Exit the loop
     ]
+    mocks["db"].get_resources_by_status.return_value = []  # For 'zombie'
     mocks["submitter"].get_workflow_status.return_value = "success"
 
     with pytest.raises(SystemExit):
@@ -100,14 +104,14 @@ def test_main_loop_handles_running_case_failure(mock_dependencies):
     mocks = mock_dependencies
     now = datetime.now(timezone.utc).isoformat()
     running_case = {"case_id": 2, "pueue_task_id": 102, "status_updated_at": now}
-    # Loop 1: No stuck, one running, no submitted. Loop 2: Clean exit.
+    # Adjust mock for the refactored loop structure
     mocks["db"].get_cases_by_status.side_effect = [
-        [],  # For stuck cases
-        [running_case],  # For running cases timeout check
-        [running_case],  # For running cases status check
-        [],  # For submitted cases
-        SystemExit,
+        [],  # For 'submitting'
+        [running_case],  # For 'running'
+        [],  # For 'submitted'
+        SystemExit,  # Exit the loop
     ]
+    mocks["db"].get_resources_by_status.return_value = []  # For 'zombie'
     mocks["submitter"].get_workflow_status.return_value = "failure"
 
     with pytest.raises(SystemExit):
