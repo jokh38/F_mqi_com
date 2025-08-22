@@ -91,7 +91,8 @@ class DatabaseManager:
     def add_case(self, case_path: str) -> Optional[int]:
         """
         Adds a new case to the database with 'submitted' status.
-        The `pueue_group` is initially NULL and will be assigned when a resource is locked.
+        The `pueue_group` is initially NULL and will be assigned when
+        a resource is locked.
 
         Returns:
             The ID of the newly inserted case.
@@ -250,7 +251,8 @@ class DatabaseManager:
             case_id: The ID of the case to assign to the resource.
 
         Returns:
-            The `pueue_group` name if a resource was successfully locked, None otherwise.
+            The `pueue_group` name if a resource was successfully locked,
+            None otherwise.
         """
         with self.conn:  # Ensures the block is executed in a transaction
             # This atomic UPDATE finds an available resource, claims it,
@@ -269,7 +271,8 @@ class DatabaseManager:
                 (case_id,),
             )
 
-            # If the update succeeded (a row was changed), find out which group we locked.
+            # If the update succeeded (a row was changed), find out which
+            # group we locked.
             if self.cursor.rowcount > 0:
                 self.cursor.execute(
                     """

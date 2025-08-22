@@ -27,7 +27,7 @@ KST = timezone(timedelta(hours=9))
 class KSTFormatter(logging.Formatter):
     """A logging formatter that uses KST for timestamps."""
 
-    def formatTime(
+    def format_time(
         self, record: logging.LogRecord, datefmt: Optional[str] = None
     ) -> str:
         dt = datetime.fromtimestamp(record.created, KST)
@@ -87,7 +87,9 @@ def main(config: Dict[str, Any]) -> None:
         main_loop_config = config.get("main_loop", {})
         watch_path = config.get("scanner", {}).get("watch_path", "new_cases")
         sleep_interval = main_loop_config.get("sleep_interval_seconds", 10)
-        running_case_timeout_hours = main_loop_config.get("running_case_timeout_hours", 24)
+        running_case_timeout_hours = main_loop_config.get(
+            "running_case_timeout_hours", 24
+        )
         timeout_delta = timedelta(hours=running_case_timeout_hours)
 
         # Ensure the watch path exists before starting the scanner
@@ -112,9 +114,7 @@ def main(config: Dict[str, Any]) -> None:
             try:
                 # The core logic is now refactored into separate, testable functions.
                 recover_stuck_submitting_cases(db_manager, workflow_submitter)
-                manage_running_cases(
-                    db_manager, workflow_submitter, timeout_delta, KST
-                )
+                manage_running_cases(db_manager, workflow_submitter, timeout_delta, KST)
                 manage_zombie_resources(db_manager, workflow_submitter)
                 process_new_submitted_cases(db_manager, workflow_submitter)
 
@@ -151,7 +151,8 @@ if __name__ == "__main__":
         setup_logging(initial_config)
     except FileNotFoundError:
         print(
-            f"ERROR: Configuration file not found at '{CONFIG_PATH}'. The application cannot start."
+            f"ERROR: Configuration file not found at '{CONFIG_PATH}'. "
+            f"The application cannot start."
         )
         sys.exit(1)
     except Exception as e:

@@ -125,7 +125,8 @@ class WorkflowSubmitter:
         ]
         try:
             logger.info(
-                f"Submitting job for case '{safe_case_name}' (Label: {label}) to Pueue..."
+                f"Submitting job for case '{safe_case_name}' (Label: {label}) "
+                f"to Pueue..."
             )
             result = subprocess.run(
                 ssh_command, check=True, capture_output=True, text=True, timeout=60

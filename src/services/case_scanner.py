@@ -44,7 +44,8 @@ class StableDirectoryEventHandler(FileSystemEventHandler):
         # Before processing, ensure the directory still exists.
         if not os.path.isdir(path_str):
             logger.warning(
-                f"Directory '{path_str}' was deleted before it could be processed. Skipping."
+                f"Directory '{path_str}' was deleted before it could be "
+                f"processed. Skipping."
             )
             with self.lock:
                 self.timers.pop(path_str, None)
@@ -53,7 +54,8 @@ class StableDirectoryEventHandler(FileSystemEventHandler):
 
         logger.info(f"Directory '{path_str}' is stable. Attempting to add to database.")
         try:
-            # Check if the case already exists to prevent duplicates from multiple events
+            # Check if the case already exists to prevent duplicates from
+            # multiple events
             if not self.db_manager.get_case_by_path(path_str):
                 self.db_manager.add_case(path_str)
                 logger.info(f"Successfully added case '{path_str}' to the database.")
@@ -89,8 +91,9 @@ class StableDirectoryEventHandler(FileSystemEventHandler):
                 retry_timer.start()
             else:
                 logger.critical(
-                    f"Failed to process '{path_str}' after {self.max_retries + 1} attempts. "
-                    "Giving up on this directory. Please check logs and database."
+                    f"Failed to process '{path_str}' after {self.max_retries + 1} "
+                    f"attempts. Giving up on this directory. Please check logs "
+                    f"and database."
                 )
                 # Give up, clear the timer and retry count
                 self.timers.pop(path_str, None)
@@ -103,7 +106,8 @@ class StableDirectoryEventHandler(FileSystemEventHandler):
         out-of-order event delivery.
         """
         try:
-            # Use a set to handle events that have both src_path and dest_path (e.g., move)
+            # Use a set to handle events that have both src_path and
+            # dest_path (e.g., move)
             paths_to_check = set()
             if hasattr(event, "src_path"):
                 paths_to_check.add(Path(os.fsdecode(event.src_path)))

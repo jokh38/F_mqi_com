@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime, timedelta
-from typing import Dict, Any
+from typing import Any
 
 # Note: To avoid circular imports, type hint the manager classes
 # instead of importing them directly.
@@ -128,9 +128,7 @@ def manage_running_cases(
 
         if remote_status in ("success", "failure", "not_found"):
             db_manager.release_gpu_resource(case_id)
-            final_status = (
-                "completed" if remote_status == "success" else "failed"
-            )
+            final_status = "completed" if remote_status == "success" else "failed"
             db_manager.update_case_completion(case_id, status=final_status)
             if final_status == "completed":
                 logging.info(
@@ -138,9 +136,7 @@ def manage_running_cases(
                 )
             else:
                 log_level = (
-                    logging.WARNING
-                    if remote_status == "not_found"
-                    else logging.ERROR
+                    logging.WARNING if remote_status == "not_found" else logging.ERROR
                 )
                 logging.log(
                     log_level,
@@ -174,12 +170,14 @@ def manage_zombie_resources(
 
         if not zombie_case or not (task_id := zombie_case.get("pueue_task_id")):
             logging.error(
-                f"Cannot recover zombie resource '{pueue_group}'. Manual intervention required."
+                f"Cannot recover zombie resource '{pueue_group}'. "
+                f"Manual intervention required."
             )
             continue
 
         logging.info(
-            f"Attempting to kill zombie Task {task_id} to recover resource '{pueue_group}'."
+            f"Attempting to kill zombie Task {task_id} to recover "
+            f"resource '{pueue_group}'."
         )
         if workflow_submitter.kill_workflow(task_id):
             logging.info(
@@ -235,7 +233,8 @@ def process_new_submitted_cases(
                 db_manager.update_case_pueue_task_id(case_id, pueue_task_id)
                 db_manager.update_case_status(case_id, status="running", progress=30)
                 logging.info(
-                    f"Case {case_id} submitted to '{group_name}' as Task ID: {pueue_task_id}."
+                    f"Case {case_id} submitted to '{group_name}' as "
+                    f"Task ID: {pueue_task_id}."
                 )
             else:
                 raise ValueError("Failed to parse Pueue Task ID from submission.")

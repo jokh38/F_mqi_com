@@ -23,7 +23,9 @@ from src.common.db_manager import DatabaseManager, KST
 CONFIG_PATH = "config/config.yaml"
 
 
-def create_tables(case_data: List[Dict[str, Any]], resource_data: List[Dict[str, Any]]) -> Layout:
+def create_tables(
+    case_data: List[Dict[str, Any]], resource_data: List[Dict[str, Any]]
+) -> Layout:
     """Creates the layout containing tables for cases and GPU resources."""
     layout = Layout()
     layout.split_column(
@@ -98,7 +100,9 @@ def create_tables(case_data: List[Dict[str, Any]], resource_data: List[Dict[str,
             ),
         )
 
-    layout["main"].update(Panel(Align.center(case_table, vertical="middle"), title="Cases"))
+    layout["main"].update(
+        Panel(Align.center(case_table, vertical="middle"), title="Cases")
+    )
     layout["footer"].update(
         Panel(Align.center(resource_table, vertical="middle"), title="GPU Resources")
     )
@@ -121,7 +125,8 @@ def display_dashboard() -> None:
         db_path = config.get("database", {}).get("path")
         if not db_path:
             console.print(
-                f"[bold red]Error: Database path not found in '{CONFIG_PATH}'[/bold red]"
+                f"[bold red]Error: Database path not found "
+                f"in '{CONFIG_PATH}'[/bold red]"
             )
             return
 
@@ -147,7 +152,8 @@ def display_dashboard() -> None:
         with Live(create_tables([], []), screen=True, redirect_stderr=False) as live:
             while True:
                 # Fetch all cases and resources
-                # A real implementation might be more selective, but for a few hundred cases this is fine.
+                # A real implementation might be more selective, but for a
+                # few hundred cases this is fine.
                 all_cases = db_manager.cursor.execute(
                     "SELECT * FROM cases ORDER BY case_id DESC"
                 ).fetchall()
