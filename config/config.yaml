@@ -27,6 +27,18 @@ scanner:
 main_loop:
   sleep_interval_seconds: 10 # Time to wait between polling for new cases
   running_case_timeout_hours: 24 # After this many hours, a 'running' case with no status update is marked as failed.
+  # Parallel processing configuration
+  parallel_processing:
+    enabled: true # Enable parallel case processing
+    max_workers: 4 # Maximum number of concurrent processing threads
+    batch_size: 10 # Maximum number of cases to process in one batch
+    processing_timeout: 300.0 # Timeout in seconds for individual case processing
+  # Priority scheduling configuration
+  priority_scheduling:
+    enabled: true # Enable priority-based case scheduling
+    algorithm: "weighted_fair" # Options: "strict_priority", "weighted_fair", "aging"
+    aging_factor: 0.1 # Priority boost per hour of waiting (for aging algorithm)
+    starvation_threshold_hours: 24 # Hours after which low priority cases get boost
 
 pueue:
   # List of all pueue groups that the application can manage.

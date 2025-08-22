@@ -329,3 +329,30 @@ def process_new_submitted_cases_with_optimization(
             db_manager.update_case_completion(case_id, status="failed")
             db_manager.release_gpu_resource(case_id)
             logging.info(f"Released GPU for failed case {case_id}.")
+
+
+def process_new_submitted_cases_parallel(
+    db_manager: DatabaseManager,
+    workflow_submitter: WorkflowSubmitter,
+    parallel_processor: Optional[Any] = None
+) -> bool:
+    """
+    Process submitted cases using parallel processing for improved performance.
+    
+    Args:
+        db_manager: Database manager instance
+        workflow_submitter: Workflow submitter instance
+        parallel_processor: ParallelCaseProcessor instance for concurrent processing
+        
+    Returns:
+        bool: True if any cases were processed, False otherwise
+    """
+    if parallel_processor:
+        try:
+            return parallel_processor.process_case_batch()
+        except Exception as e:
+            logging.error(f"Parallel processing failed: {e}. Falling back to sequential processing.")
+    
+    # Fallback to sequential processing
+    process_new_submitted_cases(db_manager, workflow_submitter)
+    return True
