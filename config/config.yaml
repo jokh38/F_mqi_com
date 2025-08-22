@@ -4,10 +4,42 @@ logging:
 database:
   path: "database/mqi_communicator.db"
 
+dashboard:
+  auto_start: true  # Set to false to disable automatic dashboard launch
+
 hpc:
-  host: "your_hpc_hostname"
-  user: "your_username"
-  remote_base_dir: "/path/to/remote/dir"
+  host: "10.243.62.128"
+  user: "jokh38"
+  remote_base_dir: "~/MOQUI_SMC"
+  # The command to be executed on the remote machine after 'cd'ing into the case directory.
+  remote_command: "python interpreter.py && python moquisim.py"
+  # System commands
+  scp_command: "scp"
+  ssh_command: "ssh"
+  pueue_command: "pueue"
+
+scanner:
+  watch_path: "new_cases" # Directory to watch for new cases
+  # Time (in seconds) to wait for a directory to be "quiet" (no new file
+  # modifications) before it's considered complete and added to the queue.
+  quiescence_period_seconds: 5
+
+main_loop:
+  sleep_interval_seconds: 10 # Time to wait between polling for new cases
+  running_case_timeout_hours: 24 # After this many hours, a 'running' case with no status update is marked as failed.
+
+pueue:
+  # List of all pueue groups that the application can manage.
+  # The first group in the list is used as the default for new cases.
+  groups:
+    - "default"
+    - "gpu_a"
+    - "gpu_b"
+
+hpc:
+  host: "10.243.62.128"
+  user: "jokh38"
+  remote_base_dir: "~/MOQUI_SMC"
   # The command to be executed on the remote machine after 'cd'ing into the case directory.
   remote_command: "python interpreter.py && python moquisim.py"
   # System commands

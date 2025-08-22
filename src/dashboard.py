@@ -7,6 +7,8 @@ state of active cases and GPU resources from the database.
 
 import time
 import yaml
+import sys
+import os
 from pathlib import Path
 from rich.console import Console
 from rich.live import Live
@@ -17,10 +19,13 @@ from rich.align import Align
 from datetime import datetime
 from typing import List, Dict, Any
 
+# Add the parent directory to the path to import from src.common
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from src.common.db_manager import DatabaseManager, KST
 
 # Define the path to the configuration file
-CONFIG_PATH = "config/config.yaml"
+CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config", "config.yaml")
 
 
 def create_tables(
@@ -110,9 +115,11 @@ def create_tables(
     return layout
 
 
-def display_dashboard() -> None:
+def display_dashboard(auto_refresh: bool = True) -> None:
     """
     Displays a live-updating dashboard with the status of cases and resources.
+    If auto_refresh is True, the dashboard will update every 2 seconds.
+    If auto_refresh is False, it will display once and exit.
     """
     console = Console()
     db_manager = None
@@ -123,6 +130,9 @@ def display_dashboard() -> None:
             config = yaml.safe_load(f)
 
         db_path = config.get("database", {}).get("path")
+        # Convert to absolute path
+        if db_path:
+            db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), db_path)
         if not db_path:
             console.print(
                 f"[bold red]Error: Database path not found "
@@ -138,35 +148,54 @@ def display_dashboard() -> None:
                 "Please run the main application first to create the database."
             )
             # Create dummy tables to show the structure
-            with Live(
-                create_tables([], []), screen=True, redirect_stderr=False
-            ) as live:
-                time.sleep(5)  # Show empty dashboard for 5 seconds
+            layout = create_tables([], [])
+            console.print(layout)
             return
 
         db_manager = DatabaseManager(db_path=db_path)
         console.print("[bold cyan]MQI Communicator Dashboard[/bold cyan]")
         console.print(f"Connected to database: [yellow]{db_path}[/yellow]")
-        console.print("Press [bold]Ctrl+C[/bold] to exit.")
+        
+        if auto_refresh:
+            console.print("Press [bold]Ctrl+C[/bold] to exit.")
+        
+        # Create initial tables
+        all_cases = db_manager.cursor.execute(
+            "SELECT * FROM cases ORDER BY case_id DESC"
+        ).fetchall()
+        all_resources = db_manager.cursor.execute(
+            "SELECT * FROM gpu_resources ORDER BY pueue_group"
+        ).fetchall()
 
-        with Live(create_tables([], []), screen=True, redirect_stderr=False) as live:
-            while True:
-                # Fetch all cases and resources
-                # A real implementation might be more selective, but for a
-                # few hundred cases this is fine.
-                all_cases = db_manager.cursor.execute(
-                    "SELECT * FROM cases ORDER BY case_id DESC"
-                ).fetchall()
-                all_resources = db_manager.cursor.execute(
-                    "SELECT * FROM gpu_resources ORDER BY pueue_group"
-                ).fetchall()
+        # Convert rows to dictionaries for easier processing
+        case_data = [dict(row) for row in all_cases]
+        resource_data = [dict(row) for row in all_resources]
 
-                # Convert rows to dictionaries for easier processing
-                case_data = [dict(row) for row in all_cases]
-                resource_data = [dict(row) for row in all_resources]
+        layout = create_tables(case_data, resource_data)
+        console.print(layout)
+        
+        if auto_refresh:
+            with Live(layout, refresh_per_second=0.5, redirect_stderr=False) as live:
+                while True:
+                    # Fetch all cases and resources
+                    all_cases = db_manager.cursor.execute(
+                        "SELECT * FROM cases ORDER BY case_id DESC"
+                    ).fetchall()
+                    all_resources = db_manager.cursor.execute(
+                        "SELECT * FROM gpu_resources ORDER BY pueue_group"
+                    ).fetchall()
 
-                live.update(create_tables(case_data, resource_data))
-                time.sleep(2)  # Refresh interval
+                    # Convert rows to dictionaries for easier processing
+                    case_data = [dict(row) for row in all_cases]
+                    resource_data = [dict(row) for row in all_resources]
+
+                    live.update(create_tables(case_data, resource_data))
+                    time.sleep(2)  # Refresh interval
+
+    except FileNotFoundError:
+        console.print(
+            f"[bold red]Error: Config file not found at '{CONFIG_PATH}'[/bold red]"
+        )
 
     except FileNotFoundError:
         console.print(
@@ -182,4 +211,4 @@ def display_dashboard() -> None:
 
 
 if __name__ == "__main__":
-    display_dashboard()
+    display_dashboard(auto_refresh=True)
